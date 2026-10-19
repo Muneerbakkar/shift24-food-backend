@@ -23,14 +23,31 @@ const PORT = process.env.PORT || 5000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'shift24_session_secret_key_998877';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/shift24';
 
+// Trust proxy for Render / load balancers (required for secure cookies)
+app.set('trust proxy', 1);
+
 // 1. CORS with credentials support (for session cookie and auth headers)
+const defaultAllowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  ...(process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',').map((u) => u.trim()) : [])
+];
+
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173'
-  ],
+  origin: (origin, callback) => {
+    // Allow non-browser requests (mobile, postman, curl, health checks)
+    if (!origin) return callback(null, true);
+    if (defaultAllowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    // Allow any deployed Vercel, Netlify, or Render domain
+    if (origin.endsWith('.vercel.app') || origin.endsWith('.onrender.com') || origin.endsWith('.netlify.app')) {
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -51,15 +68,16 @@ process.on('uncaughtException', (err: any) => {
 });
 
 // 3. Resilient Session Store
+const isProduction = process.env.NODE_ENV === 'production';
 const sessionConfig: session.SessionOptions = {
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isProduction,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    sameSite: 'lax'
+    sameSite: isProduction ? 'none' : 'lax'
   }
 };
 
@@ -84,6 +102,15 @@ app.use((req, res, next) => {
     sessionMiddleware = session(sessionConfig);
   }
   sessionMiddleware(req, res, next);
+});
+
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Shift24 Meal Prep Backend API is live',
+    health: '/api/health',
+    status: 'online'
+  });
 });
 
 // 4. API Health Check
