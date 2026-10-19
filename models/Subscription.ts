@@ -19,6 +19,7 @@ export interface ISubscription {
   nextDelivery: string;
   address: string;
   allergies: string[];
+  preferences?: string[];
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -42,6 +43,7 @@ const SubscriptionSchema = new Schema<ISubscription>({
   nextDelivery: { type: String, default: 'Tomorrow, 07:30 AM (Breakfast)' },
   address: { type: String, required: true },
   allergies: { type: [String], default: [] },
+  preferences: { type: [String], default: [] },
 }, {
   timestamps: true
 });

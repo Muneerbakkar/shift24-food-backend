@@ -185,3 +185,49 @@ export const updateSubscriptionSlot = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+export const updateSubscriptionDetails = async (req: Request, res: Response) => {
+  try {
+    if (!isConnectedToDb) {
+      return res.status(503).json({ success: false, message: 'MongoDB database is not connected' });
+    }
+
+    const { id } = req.params;
+    const { duration, durationDays, mealsPerDay, slot, slotLabel, address, allergies, preferences, startDate, endDate } = req.body;
+
+    const conditions: any[] = [{ subId: id }];
+    if (mongoose.isValidObjectId(id)) {
+      conditions.push({ _id: id });
+    }
+
+    const updateFields: any = {};
+    if (duration !== undefined) updateFields.duration = duration;
+    if (durationDays !== undefined) updateFields.durationDays = durationDays;
+    if (mealsPerDay !== undefined) updateFields.mealsPerDay = mealsPerDay;
+    if (slot !== undefined) updateFields.slot = slot;
+    if (slotLabel !== undefined) updateFields.slotLabel = slotLabel;
+    if (address !== undefined) updateFields.address = address;
+    if (allergies !== undefined) updateFields.allergies = allergies;
+    if (preferences !== undefined) updateFields.preferences = preferences;
+    if (startDate !== undefined) updateFields.startDate = startDate;
+    if (endDate !== undefined) updateFields.endDate = endDate;
+
+    const updated = await Subscription.findOneAndUpdate(
+      { $or: conditions },
+      { $set: updateFields },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ success: false, message: 'Subscription not found' });
+    }
+
+    try {
+      await syncCustomerFromSubscription(updated);
+    } catch {}
+
+    return res.json({ success: true, data: updated });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
