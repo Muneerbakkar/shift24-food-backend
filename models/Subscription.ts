@@ -20,6 +20,8 @@ export interface ISubscription {
   address: string;
   allergies: string[];
   preferences?: string[];
+  pauseStartDate?: string;
+  pauseEndDate?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -44,6 +46,8 @@ const SubscriptionSchema = new Schema<ISubscription>({
   address: { type: String, required: true },
   allergies: { type: [String], default: [] },
   preferences: { type: [String], default: [] },
+  pauseStartDate: { type: String, default: null },
+  pauseEndDate: { type: String, default: null },
 }, {
   timestamps: true
 });
