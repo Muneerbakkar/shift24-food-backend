@@ -114,7 +114,7 @@ app.get('/', (req, res) => {
 });
 
 // 4. API Health Check
-app.get('/api/health', (req, res) => {
+const healthHandler = (req: any, res: any) => {
   const dbConnected = mongoose.connection.readyState === 1;
   res.json({
     status: 'ok',
@@ -126,18 +126,24 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     service: 'Shift24 Meal Prep Backend API'
   });
-});
+};
+app.get('/api/health', healthHandler);
+app.get('/health', healthHandler);
 
-// 5. Mount Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/subscriptions', subscriptionRoutes);
-app.use('/api/orders', orderRoutes);
-app.use('/api', menuRoutes); // handles /api/plans and /api/menu
-app.use('/api/customers', customerRoutes);
-app.use('/api/kitchen', kitchenRoutes);
-app.use('/api/purchases', purchaseRoutes);
-app.use('/api/expenses', expenseRoutes);
-app.use('/api/sales', salesRoutes);
+// 5. Mount Routes (accessible via both /api and root paths)
+const apiRouter = express.Router();
+apiRouter.use('/auth', authRoutes);
+apiRouter.use('/subscriptions', subscriptionRoutes);
+apiRouter.use('/orders', orderRoutes);
+apiRouter.use('/customers', customerRoutes);
+apiRouter.use('/kitchen', kitchenRoutes);
+apiRouter.use('/purchases', purchaseRoutes);
+apiRouter.use('/expenses', expenseRoutes);
+apiRouter.use('/sales', salesRoutes);
+apiRouter.use('/', menuRoutes); // handles /plans and /menu
+
+app.use('/api', apiRouter);
+app.use('/', apiRouter);
 
 // Global 404 Handler for API
 app.use('/api/*', (req, res) => {
