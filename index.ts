@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
 import { connectDB, isConnectedToDb } from './config/db';
+import { backfillSubscriptionCoordinates } from './controllers/subscriptionController';
 
 import authRoutes from './routes/authRoutes';
 import subscriptionRoutes from './routes/subscriptionRoutes';
@@ -15,8 +16,17 @@ import kitchenRoutes from './routes/kitchenRoutes';
 import purchaseRoutes from './routes/purchaseRoutes';
 import expenseRoutes from './routes/expenseRoutes';
 import salesRoutes from './routes/salesRoutes';
+import geocodeRoutes from './routes/geocodeRoutes';
+import driverRoutes from './routes/driverRoutes';
+import settingsRoutes from './routes/settingsRoutes';
+
+import path from 'path';
 
 dotenv.config();
+try {
+  dotenv.config({ path: path.resolve(process.cwd(), 'backend', '.env'), override: true });
+  dotenv.config({ path: path.resolve(__dirname, '.env'), override: true });
+} catch (e) {}
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -137,6 +147,9 @@ app.use('/api/kitchen', kitchenRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/sales', salesRoutes);
+app.use('/api/drivers', driverRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/geocode', geocodeRoutes);
 app.use('/api', menuRoutes); // handles /api/plans and /api/menu
 
 // Global 404 Handler for API
@@ -147,6 +160,7 @@ app.use('/api/*', (req, res) => {
 // Start Server
 async function startServer() {
   await connectDB();
+  backfillSubscriptionCoordinates().catch(() => {});
 
   app.listen(PORT, () => {
     console.log(`===========================================`);

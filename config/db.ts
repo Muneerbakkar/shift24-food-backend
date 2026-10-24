@@ -1,7 +1,12 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import path from 'path';
 
 dotenv.config();
+try {
+  dotenv.config({ path: path.resolve(process.cwd(), 'backend', '.env'), override: true });
+  dotenv.config({ path: path.resolve(__dirname, '..', '.env'), override: true });
+} catch (e) {}
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/shift24';
 

@@ -49,11 +49,11 @@ export async function syncCustomerFromSubscription(sub: any): Promise<any> {
     if (user) {
       user.totalSpent = (user.totalSpent || 0) + totalAmount;
       user.totalOrders = (user.totalOrders || 0) + deliveries;
-      if (sub.customerPhone && !user.phone) {
-        user.phone = sub.customerPhone;
+      if (sub.customerPhone && sub.customerPhone.trim()) {
+        user.phone = sub.customerPhone.trim();
       }
-      if (sub.customerName && (!user.name || user.name === 'Customer')) {
-        user.name = sub.customerName;
+      if (sub.customerName && sub.customerName.trim()) {
+        user.name = sub.customerName.trim();
       }
       if (sub.address) {
         const hasAddr = user.addresses?.some((a: any) => a.address.toLowerCase() === sub.address.toLowerCase());
@@ -69,9 +69,9 @@ export async function syncCustomerFromSubscription(sub: any): Promise<any> {
       return user;
     } else {
       const newUser = await User.create({
-        name: sub.customerName || 'Customer',
+        name: (sub.customerName && sub.customerName.trim()) ? sub.customerName.trim() : 'Customer',
         email: cleanEmail,
-        phone: sub.customerPhone || '',
+        phone: (sub.customerPhone && sub.customerPhone.trim()) ? sub.customerPhone.trim() : '',
         role: 'customer',
         allergies: Array.isArray(sub.allergies) ? sub.allergies : [],
         addresses: sub.address ? [{ title: 'Home', address: sub.address, isDefault: true }] : [],
@@ -119,8 +119,16 @@ export const getAllCustomers = async (req: Request, res: Response) => {
         if (sub.address && (!existing.address || existing.address === 'Address not provided')) {
           existing.address = sub.address;
         }
+        if ((sub as any).coordinates || (sub.latitude && sub.longitude)) {
+          existing.coordinates = existing.coordinates || (sub as any).coordinates || { lat: sub.latitude, lng: sub.longitude };
+          existing.latitude = existing.latitude || sub.latitude || (sub as any).coordinates?.lat;
+          existing.longitude = existing.longitude || sub.longitude || (sub as any).coordinates?.lng;
+        }
         if (sub.customerPhone && (!existing.phone || existing.phone === 'N/A')) {
           existing.phone = sub.customerPhone;
+        }
+        if (sub.customerName && (!existing.name || existing.name === 'Customer')) {
+          existing.name = sub.customerName;
         }
         if (Array.isArray(sub.allergies) && sub.allergies.length > 0) {
           existing.allergies = Array.from(new Set([...existing.allergies, ...sub.allergies]));
@@ -139,7 +147,9 @@ export const getAllCustomers = async (req: Request, res: Response) => {
           activePlan: sub.planTitle || 'Standard Plan',
           allergies: Array.isArray(sub.allergies) ? sub.allergies : [],
           address: sub.address || 'Address not provided',
-          coordinates: (sub as any).coordinates || null,
+          coordinates: (sub as any).coordinates || (sub.latitude && sub.longitude ? { lat: sub.latitude, lng: sub.longitude } : null),
+          latitude: sub.latitude || (sub as any).coordinates?.lat,
+          longitude: sub.longitude || (sub as any).coordinates?.lng,
           status: sub.status === 'Cancelled' ? 'Inactive' : 'Active',
           role: 'customer'
         });
@@ -197,6 +207,9 @@ export const getCustomerById = async (req: Request, res: Response) => {
       activePlan: sub.planTitle,
       allergies: sub.allergies || [],
       address: sub.address,
+      coordinates: (sub as any).coordinates || (sub.latitude && sub.longitude ? { lat: sub.latitude, lng: sub.longitude } : null),
+      latitude: sub.latitude || (sub as any).coordinates?.lat,
+      longitude: sub.longitude || (sub as any).coordinates?.lng,
       status: sub.status === 'Cancelled' ? 'Inactive' : 'Active',
       role: 'customer'
     };

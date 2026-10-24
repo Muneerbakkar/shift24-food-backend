@@ -2,8 +2,10 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
+import { Subscription } from '../models/Subscription';
 import { isConnectedToDb } from '../config/db';
 import { AuthRequest } from '../middleware/auth';
+import { sendPasswordResetEmail } from '../services/emailService';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'shift24_super_secure_jwt_secret_key_2026';
 const JWT_EXPIRES_IN = '7d';
@@ -166,6 +168,30 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
+    // Prioritize and synchronize Full Name and Phone Number from Subscription collection in MongoDB
+    try {
+      const latestSub = await Subscription.findOne({
+        customerEmail: new RegExp('^' + cleanEmail + '$', 'i')
+      }).sort({ createdAt: -1, _id: -1 });
+
+      if (latestSub) {
+        let changed = false;
+        if (latestSub.customerName && latestSub.customerName.trim() && user.name !== latestSub.customerName.trim()) {
+          user.name = latestSub.customerName.trim();
+          changed = true;
+        }
+        if (latestSub.customerPhone && latestSub.customerPhone.trim() && user.phone !== latestSub.customerPhone.trim()) {
+          user.phone = latestSub.customerPhone.trim();
+          changed = true;
+        }
+        if (changed) {
+          await user.save();
+        }
+      }
+    } catch (subErr) {
+      console.warn('[login] Subscription sync error:', subErr);
+    }
+
     const safeUser = {
       id: user._id,
       name: user.name,
@@ -182,6 +208,7 @@ export const login = async (req: Request, res: Response) => {
       success: true,
       message: 'Login successful',
       user: safeUser,
+      data: safeUser,
       token
     });
   } catch (error: any) {
@@ -392,9 +419,51 @@ export const getMe = async (req: AuthRequest, res: Response) => {
       return res.status(401).json({ success: false, message: 'Not authenticated' });
     }
 
+    let userObj: any = (req.user as any).toObject ? (req.user as any).toObject() : { ...req.user };
+
+    // Dynamically retrieve customerName and customerPhone from Subscription collection in MongoDB
+    if (isConnectedToDb && req.user.email) {
+      try {
+        const cleanEmail = req.user.email.toLowerCase().trim();
+        const latestSub = await Subscription.findOne({
+          customerEmail: new RegExp('^' + cleanEmail + '$', 'i')
+        }).sort({ createdAt: -1, _id: -1 });
+
+        if (latestSub) {
+          let needsSave = false;
+          const userDoc = await User.findById(req.user._id || (req.user as any).id);
+
+          if (latestSub.customerName && latestSub.customerName.trim()) {
+            const trimmedName = latestSub.customerName.trim();
+            userObj.name = trimmedName;
+            if (userDoc && userDoc.name !== trimmedName) {
+              userDoc.name = trimmedName;
+              needsSave = true;
+            }
+          }
+
+          if (latestSub.customerPhone && latestSub.customerPhone.trim()) {
+            const trimmedPhone = latestSub.customerPhone.trim();
+            userObj.phone = trimmedPhone;
+            if (userDoc && userDoc.phone !== trimmedPhone) {
+              userDoc.phone = trimmedPhone;
+              needsSave = true;
+            }
+          }
+
+          if (userDoc && needsSave) {
+            await userDoc.save();
+          }
+        }
+      } catch (subErr) {
+        console.warn('[getMe] Error reading subscription collection:', subErr);
+      }
+    }
+
     return res.json({
       success: true,
-      user: req.user,
+      user: userObj,
+      data: userObj,
       token: req.token
     });
   } catch (error: any) {
@@ -463,6 +532,25 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
 
     await user.save();
 
+    // Also synchronize updated name and phone to Subscription collection
+    if (req.user.email) {
+      try {
+        const cleanEmail = req.user.email.toLowerCase().trim();
+        const subUpdates: any = {};
+        if (name) subUpdates.customerName = name.trim();
+        if (phone !== undefined) subUpdates.customerPhone = phone.trim();
+
+        if (Object.keys(subUpdates).length > 0) {
+          await Subscription.updateMany(
+            { customerEmail: new RegExp('^' + cleanEmail + '$', 'i') },
+            { $set: subUpdates }
+          );
+        }
+      } catch (subErr) {
+        console.warn('[updateProfile] subscription update warning:', subErr);
+      }
+    }
+
     const safeUser = {
       id: user._id,
       _id: user._id,
@@ -480,7 +568,8 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
     return res.json({
       success: true,
       message: 'Profile updated successfully',
-      user: safeUser
+      user: safeUser,
+      data: safeUser
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
@@ -544,6 +633,154 @@ export const changePassword = async (req: AuthRequest, res: Response) => {
     return res.json({
       success: true,
       message: 'Password changed successfully'
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// In-memory fallback store for reset codes
+const inMemoryResetCodes = new Map<string, { code: string; expires: number }>();
+
+// -------------------------------------------------------------
+// Forgot Password - Request Email Reset Code
+// -------------------------------------------------------------
+export const forgotPassword = async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide your email address'
+      });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+
+    if (!isConnectedToDb) {
+      const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+      inMemoryResetCodes.set(cleanEmail, { code: resetCode, expires: Date.now() + 15 * 60 * 1000 });
+      return res.json({
+        success: true,
+        message: `Password reset code sent to ${cleanEmail}`,
+        resetCode: resetCode
+      });
+    }
+
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'No account found with this email address'
+      });
+    }
+
+    // Generate 6-digit verification code
+    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    user.resetPasswordToken = resetCode;
+    user.resetPasswordExpires = expiresAt;
+    await user.save();
+
+    inMemoryResetCodes.set(cleanEmail, { code: resetCode, expires: Date.now() + 15 * 60 * 1000 });
+
+    console.log(`\n======================================================`);
+    console.log(`[Shift24 Security] PASSWORD RESET CODE FOR: ${cleanEmail}`);
+    console.log(`Verification Code: ${resetCode}`);
+    console.log(`Valid until: ${expiresAt.toLocaleTimeString()}`);
+    console.log(`======================================================\n`);
+
+    // Dispatch real email via nodemailer or test preview
+    const emailResult = await sendPasswordResetEmail({
+      toEmail: cleanEmail,
+      userName: user.name || 'Valued Member',
+      resetCode
+    });
+
+    return res.json({
+      success: true,
+      message: emailResult.sent
+        ? `A 6-digit password reset verification code has been sent directly to ${cleanEmail}. Please check your inbox and spam folder.`
+        : `Verification code generated for ${cleanEmail}. (SMTP not configured in backend/.env)`,
+      emailSent: emailResult.sent,
+      previewUrl: emailResult.previewUrl || undefined,
+      resetCode: resetCode,
+      provider: emailResult.provider
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// -------------------------------------------------------------
+// Reset Password - Verify Code & Set New Password
+// -------------------------------------------------------------
+export const resetPassword = async (req: Request, res: Response) => {
+  try {
+    const { email, resetCode, newPassword } = req.body;
+
+    if (!email || !resetCode || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, verification code, and new password are required'
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 6 characters'
+      });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanCode = String(resetCode).trim();
+
+    if (!isConnectedToDb) {
+      const stored = inMemoryResetCodes.get(cleanEmail);
+      if (!stored || stored.code !== cleanCode || Date.now() > stored.expires) {
+        return res.status(400).json({ success: false, message: 'Invalid or expired verification code' });
+      }
+      inMemoryResetCodes.delete(cleanEmail);
+      return res.json({
+        success: true,
+        message: 'Password reset successfully! You can now log in with your new password.'
+      });
+    }
+
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const memStored = inMemoryResetCodes.get(cleanEmail);
+    const validInMemory = memStored && memStored.code === cleanCode && Date.now() <= memStored.expires;
+
+    const validInDb = user.resetPasswordToken && 
+      user.resetPasswordToken === cleanCode && 
+      (!user.resetPasswordExpires || new Date() <= new Date(user.resetPasswordExpires));
+
+    if (!validInMemory && !validInDb) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification code. Please check the code or request a new one.'
+      });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    inMemoryResetCodes.delete(cleanEmail);
+
+    return res.json({
+      success: true,
+      message: 'Password reset successfully! You can now use your new password.'
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });

@@ -11,10 +11,22 @@ export interface IOrder {
   deliveryDate: string;
   deliveryTimeSlot: string;
   address: string;
+  coordinates?: { lat: number; lng: number };
+  latitude?: number;
+  longitude?: number;
   status: 'Pending' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled';
   amount: number;
   paymentMethod: string;
   allergies: string[];
+  driverId?: string;
+  driverName?: string;
+  driverPhone?: string;
+  driverVehicle?: string;
+  assignedAt?: Date;
+  stopIndex?: number;
+  distanceFromHub?: number;
+  distanceFromPrevOrder?: number;
+  deliveredAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -30,6 +42,12 @@ const OrderSchema = new Schema<IOrder>({
   deliveryDate: { type: String, required: true },
   deliveryTimeSlot: { type: String, required: true },
   address: { type: String, required: true },
+  coordinates: {
+    lat: { type: Number },
+    lng: { type: Number }
+  },
+  latitude: { type: Number },
+  longitude: { type: Number },
   status: { 
     type: String, 
     enum: ['Pending', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'], 
@@ -38,6 +56,15 @@ const OrderSchema = new Schema<IOrder>({
   amount: { type: Number, required: true },
   paymentMethod: { type: String, default: 'Online Payment' },
   allergies: { type: [String], default: [] },
+  driverId: { type: String, trim: true },
+  driverName: { type: String, trim: true },
+  driverPhone: { type: String, trim: true },
+  driverVehicle: { type: String, trim: true },
+  assignedAt: { type: Date },
+  stopIndex: { type: Number },
+  distanceFromHub: { type: Number },
+  distanceFromPrevOrder: { type: Number },
+  deliveredAt: { type: Date },
 }, {
   timestamps: true
 });

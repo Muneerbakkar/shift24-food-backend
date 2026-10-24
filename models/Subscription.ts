@@ -18,8 +18,13 @@ export interface ISubscription {
   endDate: string;
   nextDelivery: string;
   address: string;
+  coordinates?: { lat: number; lng: number };
+  latitude?: number;
+  longitude?: number;
   allergies: string[];
   preferences?: string[];
+  skippedDates?: string[];
+  skippedMeals?: string[];
   pauseStartDate?: string;
   pauseEndDate?: string;
   createdAt?: Date;
@@ -44,8 +49,16 @@ const SubscriptionSchema = new Schema<ISubscription>({
   endDate: { type: String, required: true },
   nextDelivery: { type: String, default: 'Tomorrow, 07:30 AM (Breakfast)' },
   address: { type: String, required: true },
+  coordinates: {
+    lat: { type: Number },
+    lng: { type: Number }
+  },
+  latitude: { type: Number },
+  longitude: { type: Number },
   allergies: { type: [String], default: [] },
   preferences: { type: [String], default: [] },
+  skippedDates: { type: [String], default: [] },
+  skippedMeals: { type: [String], default: [] },
   pauseStartDate: { type: String, default: null },
   pauseEndDate: { type: String, default: null },
 }, {

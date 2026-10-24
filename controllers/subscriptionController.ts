@@ -1,14 +1,109 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Subscription } from '../models/Subscription';
+import { Order } from '../models/Order';
 import { isConnectedToDb } from '../config/db';
 import { syncCustomerFromSubscription } from './customerController';
+import { resolveAddressCoordinates } from '../routes/geocodeRoutes';
+
+/**
+ * Helper to safely extract or geocode coordinates for a subscription
+ */
+export async function resolveSubscriptionCoords(
+  rawCoords?: any,
+  rawLat?: any,
+  rawLng?: any,
+  address?: string
+): Promise<{ lat: number; lng: number } | undefined> {
+  let lat: number | undefined = undefined;
+  let lng: number | undefined = undefined;
+
+  if (typeof rawLat === 'number' && !isNaN(rawLat)) {
+    lat = rawLat;
+  } else if (rawLat && !isNaN(Number(rawLat))) {
+    lat = Number(rawLat);
+  }
+
+  if (typeof rawLng === 'number' && !isNaN(rawLng)) {
+    lng = rawLng;
+  } else if (rawLng && !isNaN(Number(rawLng))) {
+    lng = Number(rawLng);
+  }
+
+  if (lat === undefined && rawCoords && typeof rawCoords.lat === 'number' && !isNaN(rawCoords.lat)) {
+    lat = Number(rawCoords.lat);
+  }
+  if (lng === undefined && rawCoords && typeof rawCoords.lng === 'number' && !isNaN(rawCoords.lng)) {
+    lng = Number(rawCoords.lng);
+  }
+
+  // If both lat and lng are valid numbers, return them
+  if (lat !== undefined && lng !== undefined) {
+    return { lat, lng };
+  }
+
+  // If address is available, geocode it
+  if (address && address.trim()) {
+    try {
+      const geo = await resolveAddressCoordinates(address);
+      if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
+        return { lat: geo.lat, lng: geo.lng };
+      }
+    } catch (e) {
+      console.warn('[SubscriptionController] Error geocoding address:', e);
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Backfill coordinates for any subscriptions missing latitude, longitude, or coordinates
+ */
+export const backfillSubscriptionCoordinates = async () => {
+  if (!isConnectedToDb) return;
+  try {
+    const subsToFix = await Subscription.find({
+      $or: [
+        { latitude: { $exists: false } },
+        { latitude: null },
+        { longitude: { $exists: false } },
+        { longitude: null },
+        { 'coordinates.lat': { $exists: false } },
+        { 'coordinates.lat': null }
+      ]
+    });
+
+    for (const sub of subsToFix) {
+      if (sub.address && sub.address.trim()) {
+        const geo = await resolveAddressCoordinates(sub.address);
+        if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
+          await Subscription.updateOne(
+            { _id: sub._id },
+            {
+              $set: {
+                latitude: geo.lat,
+                longitude: geo.lng,
+                coordinates: { lat: geo.lat, lng: geo.lng }
+              }
+            }
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[SubscriptionBackfill] Notice during backfill:', err);
+  }
+};
 
 export const getAllSubscriptions = async (req: Request, res: Response) => {
   try {
     if (!isConnectedToDb) {
       return res.status(503).json({ success: false, message: 'MongoDB database is not connected' });
     }
+
+    // Trigger non-blocking backfill for any subscription missing coords
+    backfillSubscriptionCoordinates().catch(() => {});
 
     const { plan, status, search, email } = req.query;
     const query: any = {};
@@ -72,7 +167,14 @@ export const createSubscription = async (req: Request, res: Response) => {
     const subData = req.body;
     const subId = subData.subId || subData.id || `SUB-${Math.floor(100 + Math.random() * 900)}`;
 
-    const newSubData = {
+    const coords = await resolveSubscriptionCoords(
+      subData.coordinates,
+      subData.latitude,
+      subData.longitude,
+      subData.address
+    );
+
+    const newSubData: any = {
       subId,
       customerName: subData.customerName || 'Customer',
       customerEmail: (subData.customerEmail || '').toLowerCase().trim(),
@@ -90,7 +192,12 @@ export const createSubscription = async (req: Request, res: Response) => {
       endDate: subData.endDate || new Date(Date.now() + 7 * 86400000).toISOString(),
       nextDelivery: subData.nextDelivery || 'Tomorrow, 07:30 AM (Breakfast)',
       address: subData.address || '',
-      allergies: Array.isArray(subData.allergies) ? subData.allergies : []
+      coordinates: coords,
+      latitude: coords ? coords.lat : undefined,
+      longitude: coords ? coords.lng : undefined,
+      allergies: Array.isArray(subData.allergies) ? subData.allergies : [],
+      preferences: Array.isArray(subData.preferences) ? subData.preferences : [],
+      skippedDates: Array.isArray(subData.skippedDates) ? subData.skippedDates : []
     };
 
     const created = await Subscription.create(newSubData);
@@ -165,6 +272,36 @@ export const updateSubscriptionStatus = async (req: Request, res: Response) => {
       await syncCustomerFromSubscription(updated);
     } catch {}
 
+    // When subscription is paused or cancelled, automatically delete non-delivered orders
+    if (status === 'Paused' || status === 'Cancelled') {
+      try {
+        await Order.deleteMany({
+          subscriptionId: updated.subId,
+          status: { $ne: 'Delivered' }
+        });
+      } catch (delErr) {
+        console.warn('[SubscriptionController] Notice deleting non-delivered orders for paused/cancelled sub:', delErr);
+      }
+    }
+
+    // Synchronize coordinates and address to all active orders of this subscription
+    try {
+      const orderUpdates: any = {};
+      if (updated.address) orderUpdates.address = updated.address;
+      if (updated.coordinates) orderUpdates.coordinates = updated.coordinates;
+      if (typeof updated.latitude === 'number') orderUpdates.latitude = updated.latitude;
+      if (typeof updated.longitude === 'number') orderUpdates.longitude = updated.longitude;
+
+      if (Object.keys(orderUpdates).length > 0) {
+        await Order.updateMany(
+          { subscriptionId: updated.subId },
+          { $set: orderUpdates }
+        );
+      }
+    } catch (orderSyncErr) {
+      console.warn('[SubscriptionController] Notice updating linked orders:', orderSyncErr);
+    }
+
     return res.json({ success: true, data: updated });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
@@ -212,7 +349,25 @@ export const updateSubscriptionDetails = async (req: Request, res: Response) => 
     }
 
     const { id } = req.params;
-    const { duration, durationDays, mealsPerDay, slot, slotLabel, address, allergies, preferences, startDate, endDate, pauseStartDate, pauseEndDate } = req.body;
+    const { 
+      duration, 
+      durationDays, 
+      mealsPerDay, 
+      slot, 
+      slotLabel, 
+      address, 
+      coordinates, 
+      latitude, 
+      longitude, 
+      allergies, 
+      preferences, 
+      skippedDates, 
+      skippedMeals,
+      startDate, 
+      endDate, 
+      pauseStartDate, 
+      pauseEndDate 
+    } = req.body;
 
     const conditions: any[] = [{ subId: id }];
     if (mongoose.isValidObjectId(id)) {
@@ -228,10 +383,69 @@ export const updateSubscriptionDetails = async (req: Request, res: Response) => 
     if (address !== undefined) updateFields.address = address;
     if (allergies !== undefined) updateFields.allergies = allergies;
     if (preferences !== undefined) updateFields.preferences = preferences;
+    if (skippedDates !== undefined) {
+      updateFields.skippedDates = skippedDates;
+      // Auto-purge any existing non-delivered orders for these skipped dates!
+      try {
+        const subIdToClean = id;
+        const cleanId = String(subIdToClean).replace(/^SUB-/, '');
+        for (const sd of (Array.isArray(skippedDates) ? skippedDates : [])) {
+          if (!sd) continue;
+          const parts = String(sd).trim().split('-');
+          if (parts.length === 3) {
+            const sY = Number(parts[0]);
+            const sM = Number(parts[1]);
+            const sD = Number(parts[2]);
+            const slug1 = `${sY}${String(sM).padStart(2, '0')}${String(sD).padStart(2, '0')}`;
+            const slug2 = `${sY}${String(sM + 1).padStart(2, '0')}${String(sD).padStart(2, '0')}`;
+            for (const slug of [slug1, slug2]) {
+              await Order.deleteMany({
+                orderId: { $regex: new RegExp(`^ORD-${cleanId}-${slug}-[BLD]$`) },
+                status: { $ne: 'Delivered' }
+              });
+            }
+          }
+        }
+      } catch (cleanErr) {
+        console.warn('Error purging orders for skipped dates in updateSubscriptionDetails:', cleanErr);
+      }
+    }
+
+    if (skippedMeals !== undefined) {
+      updateFields.skippedMeals = skippedMeals;
+      // Auto-purge any existing non-delivered orders for these skipped meals!
+      try {
+        const cleanId = String(id).replace(/^SUB-/, '');
+        for (const sm of (Array.isArray(skippedMeals) ? skippedMeals : [])) {
+          if (!sm) continue;
+          const [datePart, mealSlot] = String(sm).split(':');
+          if (datePart && mealSlot) {
+            const slug = datePart.replace(/-/g, '');
+            const suffix = mealSlot.toLowerCase().startsWith('b') ? 'B' : mealSlot.toLowerCase().startsWith('l') ? 'L' : 'D';
+            await Order.deleteMany({
+              orderId: `ORD-${cleanId}-${slug}-${suffix}`,
+              status: { $ne: 'Delivered' }
+            });
+          }
+        }
+      } catch (cleanErr) {
+        console.warn('Error purging orders for skipped meals in updateSubscriptionDetails:', cleanErr);
+      }
+    }
+
     if (startDate !== undefined) updateFields.startDate = startDate;
     if (endDate !== undefined) updateFields.endDate = endDate;
     if (pauseStartDate !== undefined) updateFields.pauseStartDate = pauseStartDate;
     if (pauseEndDate !== undefined) updateFields.pauseEndDate = pauseEndDate;
+
+    if (address !== undefined || coordinates !== undefined || latitude !== undefined || longitude !== undefined) {
+      const coords = await resolveSubscriptionCoords(coordinates, latitude, longitude, address);
+      if (coords) {
+        updateFields.coordinates = coords;
+        updateFields.latitude = coords.lat;
+        updateFields.longitude = coords.lng;
+      }
+    }
 
     const updated = await Subscription.findOneAndUpdate(
       { $or: conditions },
@@ -246,6 +460,24 @@ export const updateSubscriptionDetails = async (req: Request, res: Response) => 
     try {
       await syncCustomerFromSubscription(updated);
     } catch {}
+
+    // Synchronize coordinates and address to all active orders of this subscription
+    try {
+      const orderUpdates: any = {};
+      if (updated.address) orderUpdates.address = updated.address;
+      if (updated.coordinates) orderUpdates.coordinates = updated.coordinates;
+      if (typeof updated.latitude === 'number') orderUpdates.latitude = updated.latitude;
+      if (typeof updated.longitude === 'number') orderUpdates.longitude = updated.longitude;
+
+      if (Object.keys(orderUpdates).length > 0) {
+        await Order.updateMany(
+          { subscriptionId: updated.subId },
+          { $set: orderUpdates }
+        );
+      }
+    } catch (orderSyncErr) {
+      console.warn('[SubscriptionController] Notice updating linked orders:', orderSyncErr);
+    }
 
     return res.json({ success: true, data: updated });
   } catch (error: any) {

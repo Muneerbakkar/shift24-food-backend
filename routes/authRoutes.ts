@@ -8,12 +8,15 @@ import {
   updateAddresses,
   updateProfile,
   changePassword,
+  forgotPassword,
+  resetPassword,
   logout,
   getAdminUsers,
   createAdminUser,
   updateAdminUser,
   deleteAdminUser
 } from '../controllers/authController';
+import { driverLogin } from '../controllers/driverController';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -21,6 +24,11 @@ const router = Router();
 // Customer / general routes
 router.post('/register', register);
 router.post('/login', login);
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
+
+// Driver routes
+router.post('/driver-login', driverLogin);
 
 // Admin routes
 router.post('/admin-register', adminRegister);
