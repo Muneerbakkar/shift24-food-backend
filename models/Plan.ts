@@ -8,7 +8,21 @@ export interface IDurationOption {
   discount: number;
   popular: boolean;
   badge?: string;
+  price?: number;
   customPrice?: number;
+  prices?: {
+    '1'?: number;
+    '2'?: number;
+    '3'?: number;
+  };
+  slotPrices?: {
+    breakfast?: number;
+    lunch?: number;
+    dinner?: number;
+    'breakfast-lunch'?: number;
+    'lunch-dinner'?: number;
+    'breakfast-dinner'?: number;
+  };
   features?: string[];
 }
 

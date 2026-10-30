@@ -10,15 +10,24 @@ try {
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/shift24';
 
-export let isConnectedToDb = false;
+export const checkDbConnection = (): boolean => mongoose.connection.readyState === 1;
 
-const updateConnectionStatus = () => {
+export let isConnectedToDb = mongoose.connection.readyState === 1;
+
+export const updateConnectionStatus = () => {
   isConnectedToDb = mongoose.connection.readyState === 1;
 };
+
+// Immediate status check on module evaluation
+updateConnectionStatus();
 
 mongoose.connection.on('connected', () => {
   updateConnectionStatus();
   console.log('[Database] MongoDB connection established successfully.');
+});
+
+mongoose.connection.on('open', () => {
+  updateConnectionStatus();
 });
 
 mongoose.connection.on('disconnected', () => {
@@ -30,6 +39,9 @@ mongoose.connection.on('reconnected', () => {
   updateConnectionStatus();
   console.log('[Database] MongoDB reconnected.');
 });
+
+// Periodic micro-check to guarantee isConnectedToDb is always in sync with mongoose
+setInterval(updateConnectionStatus, 1000).unref();
 
 let reconnectInterval: NodeJS.Timeout | null = null;
 function startReconnectLoop() {

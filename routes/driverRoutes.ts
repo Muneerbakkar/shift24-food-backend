@@ -4,6 +4,7 @@ import {
   getDriverById, 
   createDriver, 
   updateDriver, 
+  updateDriverPassword,
   deleteDriver,
   driverLogin,
   getDriverOrders
@@ -16,6 +17,8 @@ router.get('/', getAllDrivers);
 router.get('/:id/orders', getDriverOrders);
 router.get('/:id', getDriverById);
 router.post('/', createDriver);
+router.patch('/:id/password', updateDriverPassword);
+router.put('/:id/password', updateDriverPassword);
 router.put('/:id', updateDriver);
 router.patch('/:id', updateDriver);
 router.delete('/:id', deleteDriver);

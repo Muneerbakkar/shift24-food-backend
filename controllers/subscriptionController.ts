@@ -1,3 +1,4 @@
+import { sendPushNotification } from './pushController';
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Subscription } from '../models/Subscription';
@@ -183,7 +184,7 @@ export const createSubscription = async (req: Request, res: Response) => {
       planTitle: subData.planTitle || 'Balanced Health',
       duration: subData.duration || '7 Days',
       durationDays: Number(subData.durationDays) || 7,
-      mealsPerDay: subData.mealsPerDay || '3',
+      mealsPerDay: subData.mealsPerDay ? String(subData.mealsPerDay) : '3',
       slot: subData.slot || 'all',
       slotLabel: subData.slotLabel || 'All Meals',
       totalPrice: Number(subData.totalPrice) || 0,
@@ -197,10 +198,36 @@ export const createSubscription = async (req: Request, res: Response) => {
       longitude: coords ? coords.lng : undefined,
       allergies: Array.isArray(subData.allergies) ? subData.allergies : [],
       preferences: Array.isArray(subData.preferences) ? subData.preferences : [],
-      skippedDates: Array.isArray(subData.skippedDates) ? subData.skippedDates : []
+      skippedDates: Array.isArray(subData.skippedDates) ? subData.skippedDates : [],
+      skippedMeals: Array.isArray(subData.skippedMeals) ? subData.skippedMeals : []
     };
 
     const created = await Subscription.create(newSubData);
+
+    // Trigger Web Push to Customer and Admin
+    try {
+      // 1. Push to Customer
+      sendPushNotification(
+        { role: 'customer', email: created.customerEmail },
+        {
+          title: `Subscription Confirmed! 🎉`,
+          body: `Your ${created.duration} ${created.planTitle} plan is active! Next delivery: ${created.nextDelivery}`,
+          icon: '/icons/icon-192.png',
+          data: { url: '/notifications', role: 'customer' }
+        }
+      ).catch(() => {});
+
+      // 2. Push to Admins
+      sendPushNotification(
+        { role: 'admin' },
+        {
+          title: `New Subscription Order! 💰`,
+          body: `${created.customerName} subscribed to ${created.planTitle} (${created.duration}, ₹${created.totalPrice})`,
+          icon: '/icons/icon-192.png',
+          data: { url: '/admin/subscriptions', role: 'admin' }
+        }
+      ).catch(() => {});
+    } catch (e) {}
 
     // Sync customer record in MongoDB User collection
     try {
@@ -350,6 +377,8 @@ export const updateSubscriptionDetails = async (req: Request, res: Response) => 
 
     const { id } = req.params;
     const { 
+      planId,
+      planTitle,
       duration, 
       durationDays, 
       mealsPerDay, 
@@ -375,6 +404,8 @@ export const updateSubscriptionDetails = async (req: Request, res: Response) => 
     }
 
     const updateFields: any = {};
+    if (planId !== undefined) updateFields.planId = planId;
+    if (planTitle !== undefined) updateFields.planTitle = planTitle;
     if (duration !== undefined) updateFields.duration = duration;
     if (durationDays !== undefined) updateFields.durationDays = durationDays;
     if (mealsPerDay !== undefined) updateFields.mealsPerDay = mealsPerDay;

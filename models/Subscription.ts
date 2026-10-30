@@ -5,11 +5,11 @@ export interface ISubscription {
   customerName: string;
   customerEmail: string;
   customerPhone: string;
-  planId: 'weight-loss' | 'balance' | 'weight-gain';
+  planId: string;
   planTitle: string;
   duration: string;
   durationDays: number;
-  mealsPerDay: '1' | '2' | '3';
+  mealsPerDay: string;
   slot: string;
   slotLabel: string;
   totalPrice: number;
@@ -36,11 +36,11 @@ const SubscriptionSchema = new Schema<ISubscription>({
   customerName: { type: String, required: true },
   customerEmail: { type: String, required: true },
   customerPhone: { type: String, required: true },
-  planId: { type: String, enum: ['weight-loss', 'balance', 'weight-gain'], required: true },
+  planId: { type: String, required: true },
   planTitle: { type: String, required: true },
   duration: { type: String, required: true },
   durationDays: { type: Number, required: true },
-  mealsPerDay: { type: String, enum: ['1', '2', '3'], required: true },
+  mealsPerDay: { type: String, required: true },
   slot: { type: String, required: true },
   slotLabel: { type: String, required: true },
   totalPrice: { type: Number, required: true },

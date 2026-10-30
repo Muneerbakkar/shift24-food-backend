@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@types/nodemailer": "^8.0.2",
+    "@types/web-push": "^3.6.4",
     "bcryptjs": "^3.0.3",
     "connect-mongo": "^6.0.0",
     "cookie-parser": "^1.4.7",
@@ -22,7 +23,8 @@
     "mongoose": "^8.10.1",
     "nodemailer": "^10.2.1",
     "tsx": "^4.21.0",
-    "typescript": "~5.8.2"
+    "typescript": "~5.8.2",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

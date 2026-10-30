@@ -1,3 +1,4 @@
+import { sendPushNotification } from './pushController';
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Order } from '../models/Order';
@@ -504,8 +505,18 @@ export const getAllOrders = async (req: Request, res: Response) => {
       return res.status(503).json({ success: false, message: 'MongoDB database is not connected' });
     }
 
-    const { slot, status, search } = req.query;
+    const { slot, status, search, subscriptionId, customerPhone, customerName } = req.query;
     const query: any = {};
+
+    if (subscriptionId) {
+      query.subscriptionId = String(subscriptionId).trim();
+    }
+    if (customerPhone) {
+      query.customerPhone = new RegExp(String(customerPhone).trim().replace(/\+/g, '\\+'), 'i');
+    }
+    if (customerName) {
+      query.customerName = new RegExp('^' + String(customerName).trim() + '$', 'i');
+    }
 
     if (slot && slot !== 'All') {
       query.mealType = new RegExp('^' + String(slot).trim() + '$', 'i');
@@ -726,6 +737,64 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
     if (!updatedOrder) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
+
+    // Trigger Web Push Notifications to Customer, Driver, and Admin
+    try {
+      if (status === 'Out for Delivery') {
+        // Find subscription for customer email
+        Subscription.findOne({ subId: updatedOrder.subscriptionId }).then((sub) => {
+          if (sub && sub.customerEmail) {
+            sendPushNotification(
+              { role: 'customer', email: sub.customerEmail },
+              {
+                title: `Meal Out for Delivery! 🚚`,
+                body: `Your ${updatedOrder.mealType} is on the way to ${updatedOrder.address.split(',')[0]} with ${updatedOrder.driverName || 'our rider'}.`,
+                icon: '/icons/icon-192.png',
+                data: { url: '/notifications', role: 'customer' }
+              }
+            ).catch(() => {});
+          }
+        }).catch(() => {});
+
+        // Push to driver if assigned
+        if (updatedOrder.driverPhone || updatedOrder.driverId) {
+          sendPushNotification(
+            { role: 'driver' },
+            {
+              title: `Order Out for Delivery 🛵`,
+              body: `Run for ${updatedOrder.customerName} (${updatedOrder.mealType}) is now active.`,
+              icon: '/icons/icon-192.png',
+              data: { url: '/driver/portal', role: 'driver' }
+            }
+          ).catch(() => {});
+        }
+      } else if (status === 'Delivered') {
+        Subscription.findOne({ subId: updatedOrder.subscriptionId }).then((sub) => {
+          if (sub && sub.customerEmail) {
+            sendPushNotification(
+              { role: 'customer', email: sub.customerEmail },
+              {
+                title: `Meal Delivered! 🍽️`,
+                body: `Your ${updatedOrder.mealType} meal has been delivered. Enjoy your fresh meal!`,
+                icon: '/icons/icon-192.png',
+                data: { url: '/notifications', role: 'customer' }
+              }
+            ).catch(() => {});
+          }
+        }).catch(() => {});
+
+        // Push to Admin
+        sendPushNotification(
+          { role: 'admin' },
+          {
+            title: `Order Completed ✅`,
+            body: `${updatedOrder.mealType} for ${updatedOrder.customerName} was delivered by ${updatedOrder.driverName || 'Fleet Rider'}.`,
+            icon: '/icons/icon-192.png',
+            data: { url: '/admin/orders', role: 'admin' }
+          }
+        ).catch(() => {});
+      }
+    } catch (e) {}
 
     return res.json({ success: true, data: updatedOrder, message: `Status updated to ${status}` });
   } catch (error: any) {

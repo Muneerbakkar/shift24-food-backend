@@ -19,6 +19,8 @@ import salesRoutes from './routes/salesRoutes';
 import geocodeRoutes from './routes/geocodeRoutes';
 import driverRoutes from './routes/driverRoutes';
 import settingsRoutes from './routes/settingsRoutes';
+import notificationRoutes from './routes/notificationRoutes';
+import pushRoutes from './routes/pushRoutes';
 
 import path from 'path';
 
@@ -149,6 +151,8 @@ app.use('/api/expenses', expenseRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/drivers', driverRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/push', pushRoutes);
 app.use('/api/geocode', geocodeRoutes);
 app.use('/api', menuRoutes); // handles /api/plans and /api/menu
 

@@ -17,6 +17,17 @@ const syncSubscriptionsToSales = async () => {
       customerEmail: { $nin: DUMMY_EMAILS }
     });
 
+    const validSubIds = subscriptions.map(s => s.subId).filter(Boolean);
+
+    // 1. Clean up orphaned subscription sales for deleted/non-existent subscriptions
+    if (validSubIds.length > 0) {
+      await Sale.deleteMany({
+        source: 'Subscription',
+        linkedId: { $nin: validSubIds }
+      });
+    }
+
+    // 2. Sync active subscriptions
     for (const sub of subscriptions) {
       const cleanId = (sub.subId || '').replace(/^SUB-/, '') || 'SUB';
       const saleId = `INV-${cleanId}`;
@@ -24,6 +35,11 @@ const syncSubscriptionsToSales = async () => {
       const existing = await Sale.findOne({
         $or: [{ linkedId: sub.subId }, { saleId: saleId }]
       });
+
+      const days = sub.durationDays || (sub.duration ? parseInt(String(sub.duration).replace(/\D+/g, ''), 10) : 30) || 30;
+      const dailyCommissionRate = existing?.dailyCommissionRate || 100;
+      const commissionAmount = Math.min(sub.totalPrice, days * dailyCommissionRate);
+      const vendorPayout = Math.max(0, sub.totalPrice - commissionAmount);
 
       if (!existing) {
         let category: 'Weight Loss' | 'Balanced Health' | 'Muscle Gain' = 'Balanced Health';
@@ -34,10 +50,6 @@ const syncSubscriptionsToSales = async () => {
 
         const rawDate = sub.startDate || (sub.createdAt ? new Date(sub.createdAt).toISOString() : new Date().toISOString());
         const saleDate = rawDate.split('T')[0];
-        const days = sub.durationDays || (sub.duration ? parseInt(String(sub.duration).replace(/\D+/g, ''), 10) : 30) || 30;
-        const dailyCommissionRate = 100;
-        const commissionAmount = days * dailyCommissionRate;
-        const vendorPayout = Math.max(0, sub.totalPrice - commissionAmount);
 
         await Sale.create({
           saleId,
@@ -63,6 +75,20 @@ const syncSubscriptionsToSales = async () => {
           linkedId: sub.subId,
           invoiceNotes: `Automated subscription booking from plan ${sub.planTitle}. Platform Commission: ₹${commissionAmount} (${days} days @ ₹${dailyCommissionRate}/day). Kitchen Payout: ₹${vendorPayout}.`
         });
+      } else {
+        // Automatically keep totals and payouts accurate
+        if (existing.totalAmount !== sub.totalPrice || existing.commissionAmount === 0 || !existing.commissionAmount) {
+          await Sale.updateOne({ _id: existing._id }, {
+            $set: {
+              totalAmount: sub.totalPrice,
+              unitPrice: sub.totalPrice,
+              durationDays: days,
+              commissionAmount,
+              vendorPayout,
+              paymentStatus: sub.status === 'Cancelled' ? 'Refunded' : 'Completed'
+            }
+          });
+        }
       }
     }
   } catch (err) {

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { Driver, IDriver } from '../models/Driver';
 import { Order } from '../models/Order';
 import { isConnectedToDb } from '../config/db';
@@ -14,6 +15,7 @@ const INITIAL_DRIVERS: Partial<IDriver>[] = [
     name: 'Suresh Kumar',
     phone: '+91 98470 12345',
     email: 'suresh.k@shift24.food',
+    password: 'driver123',
     vehicleType: 'Motorcycle',
     vehicleNumber: 'KL-07-CB-2341',
     licenseNumber: 'KL0720180045129',
@@ -26,6 +28,7 @@ const INITIAL_DRIVERS: Partial<IDriver>[] = [
     name: 'Abhijith Nair',
     phone: '+91 94460 56789',
     email: 'abhijith.n@shift24.food',
+    password: 'driver123',
     vehicleType: 'Scooter',
     vehicleNumber: 'KL-07-CD-8812',
     licenseNumber: 'KL0720200078341',
@@ -38,6 +41,7 @@ const INITIAL_DRIVERS: Partial<IDriver>[] = [
     name: 'Mohammed Fasil',
     phone: '+91 97455 33412',
     email: 'fasil.m@shift24.food',
+    password: 'driver123',
     vehicleType: 'Motorcycle',
     vehicleNumber: 'KL-07-CK-9900',
     licenseNumber: 'KL0720190033221',
@@ -50,6 +54,7 @@ const INITIAL_DRIVERS: Partial<IDriver>[] = [
     name: 'Rahul Varma',
     phone: '+91 98950 77123',
     email: 'rahul.v@shift24.food',
+    password: 'driver123',
     vehicleType: 'Van',
     vehicleNumber: 'KL-07-BX-1122',
     licenseNumber: 'KL0720160012908',
@@ -133,7 +138,7 @@ export const createDriver = async (req: Request, res: Response) => {
       return res.status(503).json({ success: false, message: 'MongoDB is not connected' });
     }
 
-    const { name, phone, email, vehicleType, vehicleNumber, licenseNumber, status, currentZone, notes } = req.body;
+    const { name, phone, email, vehicleType, vehicleNumber, licenseNumber, status, currentZone, notes, password } = req.body;
 
     if (!name || !phone || !vehicleNumber) {
       return res.status(400).json({ success: false, message: 'Name, phone, and vehicle number are required' });
@@ -157,6 +162,7 @@ export const createDriver = async (req: Request, res: Response) => {
       name: name.trim(),
       phone: phone.trim(),
       email: email ? email.trim().toLowerCase() : undefined,
+      password: password && String(password).trim() ? String(password).trim() : 'driver123',
       vehicleType: vehicleType || 'Motorcycle',
       vehicleNumber: vehicleNumber.trim().toUpperCase(),
       licenseNumber: licenseNumber ? licenseNumber.trim().toUpperCase() : undefined,
@@ -186,6 +192,13 @@ export const updateDriver = async (req: Request, res: Response) => {
     }
     if (updates.licenseNumber) {
       updates.licenseNumber = updates.licenseNumber.trim().toUpperCase();
+    }
+    if (updates.password !== undefined) {
+      if (String(updates.password).trim()) {
+        updates.password = String(updates.password).trim();
+      } else {
+        delete updates.password;
+      }
     }
 
     const conditions: any[] = [{ driverId: id }];
@@ -217,6 +230,52 @@ export const updateDriver = async (req: Request, res: Response) => {
     }
 
     return res.json({ success: true, data: updated, message: 'Driver details updated successfully' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateDriverPassword = async (req: Request, res: Response) => {
+  try {
+    if (!isConnectedToDb) {
+      return res.status(503).json({ success: false, message: 'MongoDB is not connected' });
+    }
+
+    const { id } = req.params;
+    const { password } = req.body;
+
+    if (!password || !String(password).trim()) {
+      return res.status(400).json({ success: false, message: 'New password cannot be empty' });
+    }
+
+    const newPassword = String(password).trim();
+    if (newPassword.length < 4) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 4 characters long' });
+    }
+
+    const conditions: any[] = [{ driverId: id }];
+    if (mongoose.isValidObjectId(id)) {
+      conditions.push({ _id: id });
+    }
+
+    const updated = await Driver.findOneAndUpdate(
+      { $or: conditions },
+      { $set: { password: newPassword } },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ success: false, message: 'Driver not found' });
+    }
+
+    return res.json({
+      success: true,
+      message: `Password for driver ${updated.name} updated successfully`,
+      data: {
+        driverId: updated.driverId,
+        name: updated.name
+      }
+    });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -262,6 +321,10 @@ export const driverLogin = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Driver ID, Phone number, or Email is required' });
     }
 
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Password is required' });
+    }
+
     const cleanInput = String(identifier).trim();
     const cleanPhoneDigits = cleanInput.replace(/\D/g, '');
 
@@ -299,14 +362,23 @@ export const driverLogin = async (req: Request, res: Response) => {
 
     // Validate password (default demo password is 'driver123' if not explicitly configured)
     const expectedPassword = foundDriver.password || 'driver123';
-    if (password && password !== expectedPassword && password !== 'driver123') {
+    const enteredPassword = String(password).trim();
+
+    let isMatch = false;
+    if (expectedPassword.startsWith('$2a$') || expectedPassword.startsWith('$2b$')) {
+      isMatch = await bcrypt.compare(enteredPassword, expectedPassword);
+    } else {
+      isMatch = enteredPassword === expectedPassword;
+    }
+
+    if (!isMatch) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid password. (Default password is: driver123)'
+        message: 'Invalid password. Please check your credentials.'
       });
     }
 
-    const driverObj = foundDriver.toObject ? foundDriver.toObject() : foundDriver;
+    const driverObj = foundDriver.toObject ? foundDriver.toObject() : { ...foundDriver };
     delete driverObj.password;
 
     const token = jwt.sign(
