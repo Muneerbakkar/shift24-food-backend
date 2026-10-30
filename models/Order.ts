@@ -5,6 +5,7 @@ export interface IOrder {
   subscriptionId?: string;
   customerName: string;
   customerPhone: string;
+  customerEmail?: string;
   planTitle: string;
   mealName: string;
   mealType: 'Breakfast' | 'Lunch' | 'Dinner';
@@ -36,6 +37,7 @@ const OrderSchema = new Schema<IOrder>({
   subscriptionId: { type: String },
   customerName: { type: String, required: true },
   customerPhone: { type: String, required: true },
+  customerEmail: { type: String, default: '', lowercase: true, trim: true },
   planTitle: { type: String, required: true },
   mealName: { type: String, required: true },
   mealType: { type: String, enum: ['Breakfast', 'Lunch', 'Dinner'], required: true },
@@ -48,25 +50,31 @@ const OrderSchema = new Schema<IOrder>({
   },
   latitude: { type: Number },
   longitude: { type: Number },
-  status: { 
-    type: String, 
-    enum: ['Pending', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'], 
-    default: 'Pending' 
+  status: {
+    type: String,
+    enum: ['Pending', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'],
+    default: 'Pending'
   },
   amount: { type: Number, required: true },
-  paymentMethod: { type: String, default: 'Online Payment' },
+  paymentMethod: { type: String, default: 'Online' },
   allergies: { type: [String], default: [] },
-  driverId: { type: String, trim: true },
-  driverName: { type: String, trim: true },
-  driverPhone: { type: String, trim: true },
-  driverVehicle: { type: String, trim: true },
+  driverId: { type: String },
+  driverName: { type: String },
+  driverPhone: { type: String },
+  driverVehicle: { type: String },
   assignedAt: { type: Date },
   stopIndex: { type: Number },
   distanceFromHub: { type: Number },
   distanceFromPrevOrder: { type: Number },
-  deliveredAt: { type: Date },
+  deliveredAt: { type: Date }
 }, {
   timestamps: true
 });
 
-export const Order: Model<IOrder> = (mongoose.models.Order as Model<IOrder>) || mongoose.model<IOrder>('Order', OrderSchema);
+OrderSchema.index({ deliveryDate: 1, mealType: 1, status: 1 });
+OrderSchema.index({ subscriptionId: 1 });
+OrderSchema.index({ customerPhone: 1 });
+OrderSchema.index({ customerEmail: 1 });
+OrderSchema.index({ driverId: 1, deliveryDate: 1 });
+
+export const Order: Model<IOrder> = mongoose.models.Order || mongoose.model<IOrder>('Order', OrderSchema);

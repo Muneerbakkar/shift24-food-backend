@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Request, Response } from 'express';
 import webpush from 'web-push';
 import { DevicePushSubscription, IDevicePushSubscription } from '../models/DevicePushSubscription';
@@ -32,14 +33,24 @@ export async function sendPushNotification(
     tag?: string;
   }
 ) {
-  if (!isConnectedToDb) return { sentCount: 0, failedCount: 0 };
+  const isDbReady = isConnectedToDb || mongoose.connection.readyState === 1;
+  if (!isDbReady) return { sentCount: 0, failedCount: 0 };
 
   const query: any = {};
   if (target.role) {
     query.role = target.role;
   }
   if (target.email) {
-    query.email = target.email.toLowerCase().trim();
+    const cleanEmail = target.email.toLowerCase().trim();
+    if (target.role) {
+      query.$or = [
+        { email: cleanEmail },
+        { email: '' },
+        { email: { $exists: false } }
+      ];
+    } else {
+      query.email = cleanEmail;
+    }
   }
   if (target.userId) {
     query.userId = target.userId;
@@ -103,7 +114,8 @@ export const getVapidPublicKey = async (req: Request, res: Response) => {
  */
 export const subscribeDevice = async (req: Request, res: Response) => {
   try {
-    if (!isConnectedToDb) {
+    const isDbReady = isConnectedToDb || mongoose.connection.readyState === 1;
+    if (!isDbReady) {
       return res.status(503).json({ success: false, message: 'MongoDB not connected' });
     }
 
@@ -147,7 +159,8 @@ export const subscribeDevice = async (req: Request, res: Response) => {
  */
 export const unsubscribeDevice = async (req: Request, res: Response) => {
   try {
-    if (!isConnectedToDb) {
+    const isDbReady = isConnectedToDb || mongoose.connection.readyState === 1;
+    if (!isDbReady) {
       return res.status(503).json({ success: false, message: 'MongoDB not connected' });
     }
 
@@ -169,7 +182,8 @@ export const unsubscribeDevice = async (req: Request, res: Response) => {
  */
 export const sendTestPush = async (req: Request, res: Response) => {
   try {
-    if (!isConnectedToDb) {
+    const isDbReady = isConnectedToDb || mongoose.connection.readyState === 1;
+    if (!isDbReady) {
       return res.status(503).json({ success: false, message: 'MongoDB not connected' });
     }
 

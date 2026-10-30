@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { Order } from '../models/Order';
 import { Subscription } from '../models/Subscription';
 import { isConnectedToDb } from '../config/db';
+import { createAndDispatchNotification } from './notificationController';
 
 const DUMMY_ORDER_IDS = new Set(['ORD-901', 'ORD-902', 'ORD-903', 'ORD-904', 'ORD-905', 'ORD-906']);
 const DUMMY_CUSTOMERS = new Set(['Rahul Sharma', 'Ananya Roy', 'Vikram Menon', 'Pooja Iyer', 'Karthik Nair']);
@@ -472,6 +473,22 @@ export const syncOrdersFromSubscriptions = async (options?: { slot?: 'Breakfast'
 
     if (ordersToInsert.length > 0) {
       await Order.insertMany(ordersToInsert, { ordered: false });
+      for (const o of ordersToInsert) {
+        createAndDispatchNotification({
+          notificationId: `ord-gen-${o.orderId}`,
+          role: 'customer',
+          customerEmail: o.customerEmail,
+          customerPhone: o.customerPhone,
+          customerName: o.customerName,
+          subscriptionId: o.subscriptionId,
+          orderId: o.orderId,
+          title: `Today's ${o.mealType} Scheduled 🍲`,
+          message: `Your ${o.mealName} is scheduled for today (${o.deliveryTimeSlot}). Kitchen preparation begins soon.`,
+          type: 'order',
+          status: o.status || 'Pending',
+          link: '/profile'
+        }).catch(() => {});
+      }
     }
     if (bulkUpdates.length > 0) {
       await Order.bulkWrite(bulkUpdates);
@@ -560,6 +577,18 @@ export const generateOrdersFromSubscriptions = async (req: Request, res: Respons
     const slot = (req.body?.slot || req.query?.slot) as 'Breakfast' | 'Lunch' | 'Dinner' | undefined;
     const targetDateISO = (req.body?.date || req.query?.date || req.body?.targetDateISO || req.query?.targetDateISO) as string | undefined;
     const summary = await syncOrdersFromSubscriptions({ slot, targetDateISO });
+
+    if (summary.generatedOrdersCount > 0) {
+      createAndDispatchNotification({
+        notificationId: `admin-gen-${Date.now()}`,
+        role: 'admin',
+        title: `Meal Orders Generated for ${slot || 'Today'} 📦`,
+        message: `Successfully generated ${summary.generatedOrdersCount} meals across active subscriptions in Kakkanad. Dispatch is ready.`,
+        type: 'dispatch',
+        status: 'Preparing',
+        link: '/admin/orders'
+      }).catch(() => {});
+    }
 
     const dbOrders = await Order.find({}).sort({ createdAt: -1 });
     const filtered = dbOrders.filter(o => 
@@ -738,61 +767,129 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    // Trigger Web Push Notifications to Customer, Driver, and Admin
+
+    // Trigger Role-Based Notifications & Push according to Dispatch Status
     try {
-      if (status === 'Out for Delivery') {
-        // Find subscription for customer email
-        Subscription.findOne({ subId: updatedOrder.subscriptionId }).then((sub) => {
-          if (sub && sub.customerEmail) {
-            sendPushNotification(
-              { role: 'customer', email: sub.customerEmail },
-              {
-                title: `Meal Out for Delivery! 🚚`,
-                body: `Your ${updatedOrder.mealType} is on the way to ${updatedOrder.address.split(',')[0]} with ${updatedOrder.driverName || 'our rider'}.`,
-                icon: '/icons/icon-192.png',
-                data: { url: '/notifications', role: 'customer' }
-              }
-            ).catch(() => {});
-          }
+      let email = updatedOrder.customerEmail || '';
+      if (!email && updatedOrder.subscriptionId) {
+        const sub = await Subscription.findOne({ subId: updatedOrder.subscriptionId }).select('customerEmail');
+        if (sub?.customerEmail) email = sub.customerEmail;
+      }
+      const shortAddr = (updatedOrder.address || '').split(',')[0] || 'Kakkanad';
+
+      if (status === 'Preparing') {
+        // Customer notification
+        createAndDispatchNotification({
+          notificationId: `ord-prep-${updatedOrder.orderId}`,
+          role: 'customer',
+          customerEmail: email,
+          customerName: updatedOrder.customerName,
+          orderId: updatedOrder.orderId,
+          subscriptionId: updatedOrder.subscriptionId,
+          title: `Kitchen Cooking: ${updatedOrder.mealType} 🍳`,
+          message: `Our chefs are freshly cooking your ${updatedOrder.mealName} for today's ${updatedOrder.deliveryTimeSlot}.`,
+          type: 'kitchen',
+          status: 'Preparing',
+          link: '/profile'
         }).catch(() => {});
 
-        // Push to driver if assigned
-        if (updatedOrder.driverPhone || updatedOrder.driverId) {
-          sendPushNotification(
-            { role: 'driver' },
-            {
-              title: `Order Out for Delivery 🛵`,
-              body: `Run for ${updatedOrder.customerName} (${updatedOrder.mealType}) is now active.`,
-              icon: '/icons/icon-192.png',
-              data: { url: '/driver/portal', role: 'driver' }
-            }
-          ).catch(() => {});
+        // Admin notification
+        createAndDispatchNotification({
+          notificationId: `admin-prep-${updatedOrder.orderId}`,
+          role: 'admin',
+          orderId: updatedOrder.orderId,
+          title: `Kitchen: ${updatedOrder.orderId} Cooking 🍳`,
+          message: `${updatedOrder.mealType} for ${updatedOrder.customerName} is now in the kitchen prep queue.`,
+          type: 'kitchen',
+          status: 'Preparing',
+          link: '/admin/kitchen'
+        }).catch(() => {});
+      } else if (status === 'Out for Delivery') {
+        // Customer notification
+        createAndDispatchNotification({
+          notificationId: `ord-out-${updatedOrder.orderId}`,
+          role: 'customer',
+          customerEmail: email,
+          customerName: updatedOrder.customerName,
+          orderId: updatedOrder.orderId,
+          subscriptionId: updatedOrder.subscriptionId,
+          title: `Meal Out for Delivery! 🚚`,
+          message: `Your ${updatedOrder.mealType} is on the way to ${shortAddr} with ${updatedOrder.driverName || 'Fleet Rider'}.`,
+          type: 'delivery',
+          status: 'Out for Delivery',
+          link: '/profile'
+        }).catch(() => {});
+
+        // Driver notification
+        if (updatedOrder.driverId || updatedOrder.driverPhone) {
+          createAndDispatchNotification({
+            notificationId: `drv-out-${updatedOrder.orderId}`,
+            role: 'driver',
+            driverId: updatedOrder.driverId,
+            driverName: updatedOrder.driverName,
+            orderId: updatedOrder.orderId,
+            title: `Active Delivery: ${updatedOrder.orderId} 🛵`,
+            message: `Deliver ${updatedOrder.mealType} to ${updatedOrder.customerName} (${shortAddr}).`,
+            type: 'driver',
+            status: 'Out for Delivery',
+            link: '/driver/portal'
+          }).catch(() => {});
         }
+
+        // Admin notification
+        createAndDispatchNotification({
+          notificationId: `admin-out-${updatedOrder.orderId}`,
+          role: 'admin',
+          orderId: updatedOrder.orderId,
+          title: `Order Dispatched: ${updatedOrder.orderId} 🚚`,
+          message: `${updatedOrder.customerName}'s ${updatedOrder.mealType} is out for delivery with ${updatedOrder.driverName || 'Rider'}.`,
+          type: 'dispatch',
+          status: 'Out for Delivery',
+          link: '/admin/orders'
+        }).catch(() => {});
       } else if (status === 'Delivered') {
-        Subscription.findOne({ subId: updatedOrder.subscriptionId }).then((sub) => {
-          if (sub && sub.customerEmail) {
-            sendPushNotification(
-              { role: 'customer', email: sub.customerEmail },
-              {
-                title: `Meal Delivered! 🍽️`,
-                body: `Your ${updatedOrder.mealType} meal has been delivered. Enjoy your fresh meal!`,
-                icon: '/icons/icon-192.png',
-                data: { url: '/notifications', role: 'customer' }
-              }
-            ).catch(() => {});
-          }
+        // Customer notification
+        createAndDispatchNotification({
+          notificationId: `ord-del-${updatedOrder.orderId}`,
+          role: 'customer',
+          customerEmail: email,
+          customerName: updatedOrder.customerName,
+          orderId: updatedOrder.orderId,
+          subscriptionId: updatedOrder.subscriptionId,
+          title: `Meal Delivered! 🍽️`,
+          message: `Your ${updatedOrder.mealType} has been safely delivered to ${shortAddr}. Enjoy your fresh meal!`,
+          type: 'success',
+          status: 'Delivered',
+          link: '/profile'
         }).catch(() => {});
 
-        // Push to Admin
-        sendPushNotification(
-          { role: 'admin' },
-          {
-            title: `Order Completed ✅`,
-            body: `${updatedOrder.mealType} for ${updatedOrder.customerName} was delivered by ${updatedOrder.driverName || 'Fleet Rider'}.`,
-            icon: '/icons/icon-192.png',
-            data: { url: '/admin/orders', role: 'admin' }
-          }
-        ).catch(() => {});
+        // Driver notification
+        if (updatedOrder.driverId || updatedOrder.driverPhone) {
+          createAndDispatchNotification({
+            notificationId: `drv-del-${updatedOrder.orderId}`,
+            role: 'driver',
+            driverId: updatedOrder.driverId,
+            driverName: updatedOrder.driverName,
+            orderId: updatedOrder.orderId,
+            title: `Delivered: ${updatedOrder.orderId} ✅`,
+            message: `Delivery confirmed for ${updatedOrder.customerName}.`,
+            type: 'driver',
+            status: 'Delivered',
+            link: '/driver/portal'
+          }).catch(() => {});
+        }
+
+        // Admin notification
+        createAndDispatchNotification({
+          notificationId: `admin-del-${updatedOrder.orderId}`,
+          role: 'admin',
+          orderId: updatedOrder.orderId,
+          title: `Order Completed: ${updatedOrder.orderId} ✅`,
+          message: `${updatedOrder.mealType} for ${updatedOrder.customerName} completed by ${updatedOrder.driverName || 'Fleet Rider'}.`,
+          type: 'dispatch',
+          status: 'Delivered',
+          link: '/admin/orders'
+        }).catch(() => {});
       }
     } catch (e) {}
 
@@ -856,6 +953,32 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
+    if (driverId) {
+      createAndDispatchNotification({
+        notificationId: `drv-assign-${updatedOrder.orderId}`,
+        role: 'driver',
+        driverId: String(driverId),
+        driverName: driverName || '',
+        orderId: updatedOrder.orderId,
+        title: `New Delivery Assigned: ${updatedOrder.orderId} 🛵`,
+        message: `You are assigned to deliver ${updatedOrder.mealType} to ${updatedOrder.customerName} at ${updatedOrder.address}.`,
+        type: 'driver',
+        status: updatedOrder.status,
+        link: '/driver/portal'
+      }).catch(() => {});
+
+      createAndDispatchNotification({
+        notificationId: `admin-assign-${updatedOrder.orderId}`,
+        role: 'admin',
+        orderId: updatedOrder.orderId,
+        title: `Driver Assigned: ${updatedOrder.orderId}`,
+        message: `${driverName || 'Driver'} assigned to deliver ${updatedOrder.mealType} for ${updatedOrder.customerName}.`,
+        type: 'dispatch',
+        status: updatedOrder.status,
+        link: '/admin/orders'
+      }).catch(() => {});
+    }
+
     return res.json({ 
       success: true, 
       data: updatedOrder, 
@@ -916,6 +1039,20 @@ export const bulkAssignDriverToOrders = async (req: Request, res: Response) => {
     }
 
     const result = await Order.updateMany(filter, updateDoc);
+
+    if (driverId) {
+      createAndDispatchNotification({
+        notificationId: `drv-bulk-${Date.now()}`,
+        role: 'driver',
+        driverId: String(driverId),
+        driverName: driverName || '',
+        title: `Deliveries Assigned (${orderIds.length} orders) 🛵`,
+        message: `You have been assigned ${orderIds.length} meal delivery stops in Kakkanad.`,
+        type: 'driver',
+        status: updateStatusToOutForDelivery ? 'Out for Delivery' : 'Preparing',
+        link: '/driver/portal'
+      }).catch(() => {});
+    }
 
     return res.json({
       success: true,

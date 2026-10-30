@@ -4,10 +4,83 @@ import { Notification, INotification } from '../models/Notification';
 import { Subscription } from '../models/Subscription';
 import { Order } from '../models/Order';
 import { isConnectedToDb } from '../config/db';
+import { sendPushNotification } from './pushController';
+
+/**
+ * Universal helper to create and broadcast a notification across the system & Web Push
+ */
+export async function createAndDispatchNotification(data: {
+  notificationId?: string;
+  role?: 'customer' | 'admin' | 'driver' | 'all';
+  customerEmail?: string;
+  customerPhone?: string;
+  customerName?: string;
+  driverId?: string;
+  driverName?: string;
+  subscriptionId?: string;
+  orderId?: string;
+  title: string;
+  message: string;
+  type?: 'order' | 'delivery' | 'kitchen' | 'dispatch' | 'system' | 'driver' | 'success' | 'alert' | 'calendar' | 'promo';
+  status?: string;
+  link?: string;
+}) {
+  const isDbReady = isConnectedToDb || mongoose.connection.readyState === 1;
+  if (!isDbReady) return null;
+
+  try {
+    const role = data.role || 'customer';
+    const notifId = data.notificationId || `notif-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+    const link = data.link || (role === 'admin' ? '/admin/orders' : role === 'driver' ? '/driver/portal' : '/profile');
+
+    const docData: any = {
+      notificationId: notifId,
+      role,
+      customerEmail: (data.customerEmail || '').toLowerCase().trim(),
+      customerPhone: data.customerPhone || '',
+      customerName: data.customerName || '',
+      driverId: data.driverId || '',
+      driverName: data.driverName || '',
+      subscriptionId: data.subscriptionId || '',
+      orderId: data.orderId || '',
+      title: data.title,
+      message: data.message,
+      type: data.type || (role === 'admin' ? 'dispatch' : role === 'driver' ? 'driver' : 'order'),
+      status: data.status || '',
+      unread: true,
+      isDeleted: false,
+      link
+    };
+
+    const updated = await Notification.findOneAndUpdate(
+      { notificationId: notifId },
+      { $set: docData },
+      { upsert: true, new: true }
+    );
+
+    // Send Web Push notification to target devices
+    sendPushNotification(
+      {
+        role: role === 'all' ? undefined : role,
+        email: data.customerEmail
+      },
+      {
+        title: data.title,
+        body: data.message,
+        data: { url: link, role, orderId: data.orderId }
+      }
+    ).catch(() => {});
+
+    return updated;
+  } catch (err: any) {
+    console.warn('[NotificationController] Error creating notification:', err.message);
+    return null;
+  }
+}
 
 /**
  * Synchronize subscriptions & orders into the Notification collection for a customer.
- * If a notification already exists (even if previously deleted), it is not re-created.
+ * If a notification already exists, it is updated to current status.
  */
 export async function syncCustomerNotifications(customerEmail: string) {
   const isDbReady = isConnectedToDb || mongoose.connection.readyState === 1;
@@ -28,7 +101,8 @@ export async function syncCustomerNotifications(customerEmail: string) {
     const orders = await Order.find({
       $or: [
         { subscriptionId: { $in: subIds } },
-        { customerPhone: { $in: phones } }
+        { customerPhone: { $in: phones } },
+        { customerEmail: email }
       ]
     });
 
@@ -44,6 +118,7 @@ export async function syncCustomerNotifications(customerEmail: string) {
       // Confirmed
       notifsToInsert.push({
         notificationId: `sub-confirm-${subId}`,
+        role: 'customer',
         customerEmail: email,
         customerPhone: sub.customerPhone || '',
         customerName: sub.customerName || '',
@@ -62,6 +137,7 @@ export async function syncCustomerNotifications(customerEmail: string) {
         const nextTime = sub.nextDelivery || 'Tomorrow, 08:00 AM - 09:00 AM';
         notifsToInsert.push({
           notificationId: `sub-sched-${subId}`,
+          role: 'customer',
           customerEmail: email,
           customerPhone: sub.customerPhone || '',
           customerName: sub.customerName || '',
@@ -80,6 +156,7 @@ export async function syncCustomerNotifications(customerEmail: string) {
       if (Array.isArray(sub.skippedDates) && sub.skippedDates.length > 0) {
         notifsToInsert.push({
           notificationId: `sub-skipped-${subId}-${sub.skippedDates.length}`,
+          role: 'customer',
           customerEmail: email,
           customerPhone: sub.customerPhone || '',
           customerName: sub.customerName || '',
@@ -99,6 +176,7 @@ export async function syncCustomerNotifications(customerEmail: string) {
         const pauseRange = sub.pauseStartDate ? ` from ${sub.pauseStartDate}${sub.pauseEndDate ? ` to ${sub.pauseEndDate}` : ''}` : '';
         notifsToInsert.push({
           notificationId: `sub-paused-${subId}`,
+          role: 'customer',
           customerEmail: email,
           customerPhone: sub.customerPhone || '',
           customerName: sub.customerName || '',
@@ -114,7 +192,7 @@ export async function syncCustomerNotifications(customerEmail: string) {
       }
     }
 
-    // 2. Process Order notifications
+    // 2. Process Order notifications according to dispatch status
     for (const order of orders) {
       const status = order.status || 'Pending';
       const meal = order.mealName || `${order.mealType || 'Meal'}`;
@@ -124,14 +202,16 @@ export async function syncCustomerNotifications(customerEmail: string) {
       if (status === 'Delivered') {
         notifsToInsert.push({
           notificationId: `ord-delivered-${order.orderId}`,
+          role: 'customer',
           customerEmail: email,
           customerPhone: order.customerPhone || '',
           customerName: order.customerName || '',
           subscriptionId: order.subscriptionId || '',
           orderId: order.orderId,
-          title: `Meal Delivered: ${order.mealType}`,
+          title: `Meal Delivered: ${order.mealType} 🍽️`,
           message: `Your ${meal} has been delivered to ${shortAddr}. Enjoy your fresh, healthy meal!`,
           type: 'success',
+          status: 'Delivered',
           unread: true,
           isDeleted: false,
           link: '/profile',
@@ -140,14 +220,16 @@ export async function syncCustomerNotifications(customerEmail: string) {
       } else if (status === 'Out for Delivery') {
         notifsToInsert.push({
           notificationId: `ord-out-${order.orderId}`,
+          role: 'customer',
           customerEmail: email,
           customerPhone: order.customerPhone || '',
           customerName: order.customerName || '',
           subscriptionId: order.subscriptionId || '',
           orderId: order.orderId,
-          title: `Out for Delivery: ${order.mealType}`,
-          message: `Rider ${order.driverName || 'Dispatch'} is heading to ${shortAddr} with your ${meal}.`,
+          title: `Out for Delivery: ${order.mealType} 🚚`,
+          message: `Rider ${order.driverName || 'Fleet Rider'} is heading to ${shortAddr} with your ${meal}.`,
           type: 'delivery',
+          status: 'Out for Delivery',
           unread: true,
           isDeleted: false,
           link: '/profile',
@@ -156,14 +238,35 @@ export async function syncCustomerNotifications(customerEmail: string) {
       } else if (status === 'Preparing') {
         notifsToInsert.push({
           notificationId: `ord-prep-${order.orderId}`,
+          role: 'customer',
           customerEmail: email,
           customerPhone: order.customerPhone || '',
           customerName: order.customerName || '',
           subscriptionId: order.subscriptionId || '',
           orderId: order.orderId,
-          title: `Kitchen Preparing: ${order.mealType}`,
+          title: `Kitchen Cooking: ${order.mealType} 🍳`,
           message: `Our chefs are freshly cooking your ${meal} for today's ${order.deliveryTimeSlot || order.mealType} slot.`,
           type: 'kitchen',
+          status: 'Preparing',
+          unread: true,
+          isDeleted: false,
+          link: '/profile',
+          createdAt: orderTime
+        });
+      } else {
+        // Pending
+        notifsToInsert.push({
+          notificationId: `ord-pending-${order.orderId}`,
+          role: 'customer',
+          customerEmail: email,
+          customerPhone: order.customerPhone || '',
+          customerName: order.customerName || '',
+          subscriptionId: order.subscriptionId || '',
+          orderId: order.orderId,
+          title: `Meal Scheduled: ${order.mealType}`,
+          message: `Your ${meal} is scheduled for today's ${order.deliveryTimeSlot || order.mealType} delivery in Kakkanad.`,
+          type: 'order',
+          status: 'Pending',
           unread: true,
           isDeleted: false,
           link: '/profile',
@@ -172,12 +275,13 @@ export async function syncCustomerNotifications(customerEmail: string) {
       }
     }
 
-    // Insert only notifications that don't already exist
+    // Insert or update notifications
     for (const notif of notifsToInsert) {
-      const exists = await Notification.findOne({ notificationId: notif.notificationId });
-      if (!exists) {
-        await Notification.create(notif);
-      }
+      await Notification.findOneAndUpdate(
+        { notificationId: notif.notificationId },
+        { $setOnInsert: notif },
+        { upsert: true, new: true }
+      );
     }
   } catch (err) {
     console.warn('[NotificationController] Error syncing customer notifications:', err);
@@ -186,6 +290,7 @@ export async function syncCustomerNotifications(customerEmail: string) {
 
 /**
  * GET /api/notifications
+ * Supports role: 'customer' | 'admin' | 'driver'
  */
 export const getCustomerNotifications = async (req: Request, res: Response) => {
   try {
@@ -194,25 +299,51 @@ export const getCustomerNotifications = async (req: Request, res: Response) => {
       return res.status(503).json({ success: false, message: 'MongoDB is not connected' });
     }
 
+    const role = (req.query.role || (req as any).user?.role || '').toString().toLowerCase().trim();
     const email = (
-      (req as any).user?.email ||
       req.query.email ||
+      (req as any).user?.email ||
       ''
     ).toString().toLowerCase().trim();
+    const driverId = (req.query.driverId || '').toString().trim();
 
-    if (!email) {
-      return res.json({ success: true, count: 0, data: [] });
+    // Auto-sync customer notifications if email is present
+    if (email && (role === 'customer' || !role)) {
+      await syncCustomerNotifications(email);
     }
 
-    // Auto-sync notifications for customer
-    await syncCustomerNotifications(email);
-
-    const query: any = { customerEmail: email, isDeleted: false };
+    const query: any = { isDeleted: false };
     if (req.query.unread === 'true') {
       query.unread = true;
     }
 
-    const notifications = await Notification.find(query).sort({ createdAt: -1 });
+    if (role === 'admin') {
+      query.$or = [
+        { role: 'admin' },
+        { role: 'all' },
+        { type: { $in: ['dispatch', 'kitchen', 'system'] } }
+      ];
+    } else if (role === 'driver') {
+      const driverConds: any[] = [{ role: 'driver' }, { role: 'all' }];
+      if (driverId) {
+        driverConds.push({ driverId });
+      }
+      query.$or = driverConds;
+    } else if (email) {
+      query.$or = [
+        { customerEmail: email },
+        { role: 'customer', customerEmail: email },
+        { role: 'all' }
+      ];
+    } else {
+      // Guest or general view
+      query.$or = [
+        { role: 'customer' },
+        { role: 'all' }
+      ];
+    }
+
+    const notifications = await Notification.find(query).sort({ createdAt: -1 }).limit(100);
 
     return res.json({
       success: true,
@@ -247,10 +378,6 @@ export const markNotificationAsRead = async (req: Request, res: Response) => {
       { new: true }
     );
 
-    if (!updated) {
-      return res.status(404).json({ success: false, message: 'Notification not found' });
-    }
-
     return res.json({ success: true, data: updated });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
@@ -267,6 +394,7 @@ export const markAllNotificationsAsRead = async (req: Request, res: Response) =>
       return res.status(503).json({ success: false, message: 'MongoDB is not connected' });
     }
 
+    const role = (req.body.role || req.query.role || '').toString().toLowerCase().trim();
     const email = (
       (req as any).user?.email ||
       req.body.email ||
@@ -274,14 +402,16 @@ export const markAllNotificationsAsRead = async (req: Request, res: Response) =>
       ''
     ).toString().toLowerCase().trim();
 
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Customer email is required' });
+    const filter: any = { isDeleted: false, unread: true };
+    if (role === 'admin') {
+      filter.$or = [{ role: 'admin' }, { type: { $in: ['dispatch', 'kitchen', 'system'] } }];
+    } else if (role === 'driver') {
+      filter.role = 'driver';
+    } else if (email) {
+      filter.customerEmail = email;
     }
 
-    const result = await Notification.updateMany(
-      { customerEmail: email, isDeleted: false, unread: true },
-      { $set: { unread: false } }
-    );
+    const result = await Notification.updateMany(filter, { $set: { unread: false } });
 
     return res.json({
       success: true,
@@ -328,7 +458,7 @@ export const deleteNotification = async (req: Request, res: Response) => {
 
 /**
  * DELETE /api/notifications
- * Bulk delete notifications (delete selected or delete all for customer)
+ * Bulk delete notifications (delete selected or delete all for role/user)
  */
 export const deleteNotificationsBulk = async (req: Request, res: Response) => {
   try {
@@ -337,7 +467,8 @@ export const deleteNotificationsBulk = async (req: Request, res: Response) => {
       return res.status(503).json({ success: false, message: 'MongoDB is not connected' });
     }
 
-    const { ids, all, email: bodyEmail } = req.body;
+    const { ids, all, email: bodyEmail, role: bodyRole } = req.body;
+    const role = (bodyRole || req.query.role || '').toString().toLowerCase().trim();
     const email = (
       (req as any).user?.email ||
       bodyEmail ||
@@ -346,44 +477,44 @@ export const deleteNotificationsBulk = async (req: Request, res: Response) => {
     ).toString().toLowerCase().trim();
 
     if (all === true) {
-      if (!email) {
-        return res.status(400).json({ success: false, message: 'Email required to delete all notifications' });
+      const filter: any = { isDeleted: false };
+      if (role === 'admin') {
+        filter.$or = [{ role: 'admin' }, { type: { $in: ['dispatch', 'kitchen', 'system'] } }];
+      } else if (role === 'driver') {
+        filter.role = 'driver';
+      } else if (email) {
+        filter.customerEmail = email;
       }
 
-      const result = await Notification.updateMany(
-        { customerEmail: email, isDeleted: false },
-        { $set: { isDeleted: true } }
-      );
+      const result = await Notification.updateMany(filter, { $set: { isDeleted: true } });
 
       return res.json({
         success: true,
-        message: 'All notifications deleted successfully',
-        deletedCount: result.modifiedCount
+        message: 'All notifications cleared successfully',
+        modifiedCount: result.modifiedCount
       });
     }
 
-    if (Array.isArray(ids) && ids.length > 0) {
-      const objectIds = ids.filter((id: string) => mongoose.isValidObjectId(id));
-      const strIds = ids.map((id: string) => String(id));
-
-      const result = await Notification.updateMany(
-        {
-          $or: [
-            { _id: { $in: objectIds } },
-            { notificationId: { $in: strIds } }
-          ]
-        },
-        { $set: { isDeleted: true } }
-      );
-
-      return res.json({
-        success: true,
-        message: `${result.modifiedCount} notification(s) deleted successfully`,
-        deletedCount: result.modifiedCount
-      });
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'ids array is required for bulk deletion' });
     }
 
-    return res.status(400).json({ success: false, message: 'Provide ids array or set all=true' });
+    const validObjectIds = ids.filter(id => mongoose.isValidObjectId(id));
+    const conditions: any[] = [{ notificationId: { $in: ids } }];
+    if (validObjectIds.length > 0) {
+      conditions.push({ _id: { $in: validObjectIds } });
+    }
+
+    const result = await Notification.updateMany(
+      { $or: conditions },
+      { $set: { isDeleted: true } }
+    );
+
+    return res.json({
+      success: true,
+      message: `${result.modifiedCount} notifications deleted successfully`,
+      modifiedCount: result.modifiedCount
+    });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }
