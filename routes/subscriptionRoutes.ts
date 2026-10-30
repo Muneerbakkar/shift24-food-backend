@@ -5,7 +5,8 @@ import {
   createSubscription, 
   updateSubscriptionStatus, 
   updateSubscriptionSlot,
-  updateSubscriptionDetails 
+  updateSubscriptionDetails,
+  deleteSubscription
 } from '../controllers/subscriptionController';
 
 const router = Router();
@@ -17,5 +18,6 @@ router.patch('/:id/status', updateSubscriptionStatus);
 router.patch('/:id/slot', updateSubscriptionSlot);
 router.patch('/:id', updateSubscriptionDetails);
 router.put('/:id', updateSubscriptionDetails);
+router.delete('/:id', deleteSubscription);
 
 export default router;

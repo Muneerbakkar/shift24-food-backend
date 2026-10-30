@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Order } from '../models/Order';
 import { Subscription } from '../models/Subscription';
+import { User } from '../models/User';
 import { isConnectedToDb } from '../config/db';
 import { createAndDispatchNotification } from './notificationController';
 
@@ -770,10 +771,14 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
 
     // Trigger Role-Based Notifications & Push according to Dispatch Status
     try {
-      let email = updatedOrder.customerEmail || '';
+      let email = (updatedOrder.customerEmail || '').toLowerCase().trim();
       if (!email && updatedOrder.subscriptionId) {
         const sub = await Subscription.findOne({ subId: updatedOrder.subscriptionId }).select('customerEmail');
-        if (sub?.customerEmail) email = sub.customerEmail;
+        if (sub?.customerEmail) email = sub.customerEmail.toLowerCase().trim();
+      }
+      if (!email && updatedOrder.customerPhone) {
+        const user = await User.findOne({ phone: updatedOrder.customerPhone }).select('email');
+        if (user?.email) email = user.email.toLowerCase().trim();
       }
       const shortAddr = (updatedOrder.address || '').split(',')[0] || 'Kakkanad';
 
@@ -954,6 +959,44 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
     }
 
     if (driverId) {
+      // 1. Resolve customer email
+      let customerEmail = (updatedOrder.customerEmail || '').toLowerCase().trim();
+      if (!customerEmail && updatedOrder.subscriptionId) {
+        const sub = await Subscription.findOne({ subId: updatedOrder.subscriptionId }).select('customerEmail');
+        if (sub?.customerEmail) customerEmail = sub.customerEmail.toLowerCase().trim();
+      }
+      if (!customerEmail && updatedOrder.customerPhone) {
+        const user = await User.findOne({ phone: updatedOrder.customerPhone }).select('email');
+        if (user?.email) customerEmail = user.email.toLowerCase().trim();
+      }
+
+      const isOutForDelivery = updateStatusToOutForDelivery || updatedOrder.status === 'Out for Delivery';
+      const shortAddr = (updatedOrder.address || '').split(',')[0] || 'Kakkanad';
+
+      // 2. Dispatch Customer notification for rider assignment / out for delivery
+      if (customerEmail) {
+        createAndDispatchNotification({
+          notificationId: isOutForDelivery 
+            ? `ord-out-${updatedOrder.orderId}` 
+            : `ord-assign-${updatedOrder.orderId}`,
+          role: 'customer',
+          customerEmail,
+          customerName: updatedOrder.customerName,
+          customerPhone: updatedOrder.customerPhone,
+          orderId: updatedOrder.orderId,
+          subscriptionId: updatedOrder.subscriptionId,
+          title: isOutForDelivery 
+            ? `Meal Out for Delivery! 🚚` 
+            : `Delivery Rider Assigned 🛵`,
+          message: isOutForDelivery
+            ? `Your ${updatedOrder.mealType} is on the way to ${shortAddr} with rider ${driverName || updatedOrder.driverName || 'Fleet Rider'}.`
+            : `Rider ${driverName || updatedOrder.driverName || 'Fleet Rider'} has been assigned to deliver your ${updatedOrder.mealType}.`,
+          type: 'delivery',
+          status: isOutForDelivery ? 'Out for Delivery' : updatedOrder.status,
+          link: '/profile'
+        }).catch(() => {});
+      }
+
       createAndDispatchNotification({
         notificationId: `drv-assign-${updatedOrder.orderId}`,
         role: 'driver',
@@ -1052,6 +1095,45 @@ export const bulkAssignDriverToOrders = async (req: Request, res: Response) => {
         status: updateStatusToOutForDelivery ? 'Out for Delivery' : 'Preparing',
         link: '/driver/portal'
       }).catch(() => {});
+
+      // Dispatch Customer notifications for all affected orders
+      try {
+        const affectedOrders = await Order.find(filter);
+        for (const order of affectedOrders) {
+          let custEmail = (order.customerEmail || '').toLowerCase().trim();
+          if (!custEmail && order.subscriptionId) {
+            const sub = await Subscription.findOne({ subId: order.subscriptionId }).select('customerEmail');
+            if (sub?.customerEmail) custEmail = sub.customerEmail.toLowerCase().trim();
+          }
+          if (!custEmail && order.customerPhone) {
+            const u = await User.findOne({ phone: order.customerPhone }).select('email');
+            if (u?.email) custEmail = u.email.toLowerCase().trim();
+          }
+
+          if (custEmail) {
+            const isOut = updateStatusToOutForDelivery || order.status === 'Out for Delivery';
+            const shortAddr = (order.address || '').split(',')[0] || 'Kakkanad';
+            createAndDispatchNotification({
+              notificationId: isOut ? `ord-out-${order.orderId}` : `ord-assign-${order.orderId}`,
+              role: 'customer',
+              customerEmail: custEmail,
+              customerName: order.customerName,
+              customerPhone: order.customerPhone,
+              orderId: order.orderId,
+              subscriptionId: order.subscriptionId,
+              title: isOut ? `Meal Out for Delivery! 🚚` : `Delivery Rider Assigned 🛵`,
+              message: isOut
+                ? `Your ${order.mealType} is on the way to ${shortAddr} with rider ${driverName || order.driverName || 'Fleet Rider'}.`
+                : `Rider ${driverName || order.driverName || 'Fleet Rider'} has been assigned to deliver your ${order.mealType}.`,
+              type: 'delivery',
+              status: isOut ? 'Out for Delivery' : order.status,
+              link: '/profile'
+            }).catch(() => {});
+          }
+        }
+      } catch (custErr) {
+        console.warn('[bulkAssignDriverToOrders] Error notifying customers:', custErr);
+      }
     }
 
     return res.json({

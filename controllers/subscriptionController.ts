@@ -515,3 +515,46 @@ export const updateSubscriptionDetails = async (req: Request, res: Response) => 
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+/**
+ * Delete a subscription by subId or _id
+ */
+export const deleteSubscription = async (req: Request, res: Response) => {
+  try {
+    if (!isConnectedToDb) {
+      return res.status(503).json({ success: false, message: 'Database not connected' });
+    }
+
+    const { id } = req.params;
+    const filter: any = mongoose.isValidObjectId(id)
+      ? { $or: [{ _id: id }, { subId: id }] }
+      : { subId: id };
+
+    const subscription = await Subscription.findOne(filter);
+    if (!subscription) {
+      return res.status(404).json({ success: false, message: 'Subscription not found' });
+    }
+
+    const subId = subscription.subId;
+    await Subscription.deleteOne(filter);
+
+    // Also clean up non-delivered / pending orders linked to this subscription
+    if (subId) {
+      try {
+        await Order.deleteMany({
+          subscriptionId: subId,
+          status: { $in: ['Pending', 'Preparing'] }
+        });
+      } catch (orderErr) {
+        console.warn('[deleteSubscription] Notice deleting linked orders:', orderErr);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Subscription ${subId || id} deleted successfully`
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};

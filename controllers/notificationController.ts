@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { Notification, INotification } from '../models/Notification';
 import { Subscription } from '../models/Subscription';
 import { Order } from '../models/Order';
+import { User } from '../models/User';
 import { isConnectedToDb } from '../config/db';
 import { sendPushNotification } from './pushController';
 
@@ -49,13 +50,15 @@ export async function createAndDispatchNotification(data: {
       status: data.status || '',
       unread: true,
       isDeleted: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
       link
     };
 
     const updated = await Notification.findOneAndUpdate(
       { notificationId: notifId },
       { $set: docData },
-      { upsert: true, new: true }
+      { upsert: true, new: true, timestamps: false }
     );
 
     // Send Web Push notification to target devices
@@ -92,17 +95,19 @@ export async function syncCustomerNotifications(customerEmail: string) {
       customerEmail: new RegExp('^' + email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i')
     });
 
-    if (subscriptions.length === 0) return;
-
     const phones = subscriptions.map(s => s.customerPhone).filter(Boolean);
+    if (phones.length === 0) {
+      const user = await User.findOne({ email }).select('phone');
+      if (user?.phone) phones.push(user.phone);
+    }
     const subIds = subscriptions.map(s => s.subId).filter(Boolean);
 
     // Find any relevant orders
     const orders = await Order.find({
       $or: [
-        { subscriptionId: { $in: subIds } },
-        { customerPhone: { $in: phones } },
-        { customerEmail: email }
+        { customerEmail: new RegExp('^' + email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') },
+        ...(subIds.length > 0 ? [{ subscriptionId: { $in: subIds } }] : []),
+        ...(phones.length > 0 ? [{ customerPhone: { $in: phones } }] : [])
       ]
     });
 
@@ -201,7 +206,7 @@ export async function syncCustomerNotifications(customerEmail: string) {
 
       if (status === 'Delivered') {
         notifsToInsert.push({
-          notificationId: `ord-delivered-${order.orderId}`,
+          notificationId: `ord-del-${order.orderId}`,
           role: 'customer',
           customerEmail: email,
           customerPhone: order.customerPhone || '',
@@ -226,8 +231,8 @@ export async function syncCustomerNotifications(customerEmail: string) {
           customerName: order.customerName || '',
           subscriptionId: order.subscriptionId || '',
           orderId: order.orderId,
-          title: `Out for Delivery: ${order.mealType} 🚚`,
-          message: `Rider ${order.driverName || 'Fleet Rider'} is heading to ${shortAddr} with your ${meal}.`,
+          title: `Meal Out for Delivery! 🚚`,
+          message: `Your ${meal} is on the way to ${shortAddr} with rider ${order.driverName || 'Fleet Rider'}.`,
           type: 'delivery',
           status: 'Out for Delivery',
           unread: true,
@@ -276,11 +281,33 @@ export async function syncCustomerNotifications(customerEmail: string) {
     }
 
     // Insert or update notifications
+    const now = new Date();
     for (const notif of notifsToInsert) {
       await Notification.findOneAndUpdate(
         { notificationId: notif.notificationId },
-        { $setOnInsert: notif },
-        { upsert: true, new: true }
+        { 
+          $set: {
+            title: notif.title,
+            message: notif.message,
+            status: notif.status,
+            type: notif.type,
+            link: notif.link,
+            customerEmail: notif.customerEmail,
+            customerName: notif.customerName,
+            customerPhone: notif.customerPhone,
+            subscriptionId: notif.subscriptionId,
+            orderId: notif.orderId,
+            updatedAt: now,
+            ...(notif.status === 'Out for Delivery' || notif.status === 'Delivered' ? { isDeleted: false } : {})
+          },
+          $setOnInsert: {
+            role: notif.role,
+            unread: true,
+            isDeleted: false,
+            createdAt: notif.createdAt || now
+          }
+        },
+        { upsert: true, new: true, timestamps: false }
       );
     }
   } catch (err) {
@@ -312,6 +339,16 @@ export const getCustomerNotifications = async (req: Request, res: Response) => {
       await syncCustomerNotifications(email);
     }
 
+    // Strict privacy protection: Unauthenticated guests / unlogged users MUST NOT see other customers' notifications
+    if (!email && role !== 'admin' && role !== 'driver') {
+      return res.json({
+        success: true,
+        count: 0,
+        unreadCount: 0,
+        data: []
+      });
+    }
+
     const query: any = { isDeleted: false };
     if (req.query.unread === 'true') {
       query.unread = true;
@@ -330,20 +367,21 @@ export const getCustomerNotifications = async (req: Request, res: Response) => {
       }
       query.$or = driverConds;
     } else if (email) {
+      // Strictly scoped to THIS customer only
       query.$or = [
         { customerEmail: email },
-        { role: 'customer', customerEmail: email },
-        { role: 'all' }
+        { role: 'all', customerEmail: { $in: ['', null, undefined, email] } }
       ];
     } else {
-      // Guest or general view
-      query.$or = [
-        { role: 'customer' },
-        { role: 'all' }
-      ];
+      return res.json({
+        success: true,
+        count: 0,
+        unreadCount: 0,
+        data: []
+      });
     }
 
-    const notifications = await Notification.find(query).sort({ createdAt: -1 }).limit(100);
+    const notifications = await Notification.find(query).sort({ updatedAt: -1, createdAt: -1 }).limit(100);
 
     return res.json({
       success: true,
