@@ -3,6 +3,10 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Subscription } from '../models/Subscription';
 import { Order } from '../models/Order';
+import { Sale } from '../models/Sale';
+import { Referral } from '../models/Referral';
+import { User } from '../models/User';
+import { Notification } from '../models/Notification';
 import { isConnectedToDb } from '../config/db';
 import { syncCustomerFromSubscription } from './customerController';
 import { resolveAddressCoordinates } from '../routes/geocodeRoutes';
@@ -199,10 +203,102 @@ export const createSubscription = async (req: Request, res: Response) => {
       allergies: Array.isArray(subData.allergies) ? subData.allergies : [],
       preferences: Array.isArray(subData.preferences) ? subData.preferences : [],
       skippedDates: Array.isArray(subData.skippedDates) ? subData.skippedDates : [],
-      skippedMeals: Array.isArray(subData.skippedMeals) ? subData.skippedMeals : []
+      skippedMeals: Array.isArray(subData.skippedMeals) ? subData.skippedMeals : [],
+      paymentMethod: subData.paymentMethod || 'Razorpay',
+      paymentStatus: subData.paymentStatus || (String(subData.paymentMethod || '').toLowerCase().includes('cash') ? 'Cash on Delivery' : 'Paid'),
+      razorpayOrderId: subData.razorpayOrderId || '',
+      razorpayPaymentId: subData.razorpayPaymentId || '',
+      razorpaySignature: subData.razorpaySignature || '',
+      referralCode: subData.referralCode ? String(subData.referralCode).trim().toUpperCase() : '',
+      referredBy: subData.referredBy || ''
     };
 
     const created = await Subscription.create(newSubData);
+
+    // Handle Referral Tracking if a referral code was applied
+    if (subData.referralCode) {
+      try {
+        const cleanRefCode = String(subData.referralCode).trim().toUpperCase();
+        const referrer = await User.findOne({ referralCode: cleanRefCode });
+        if (referrer && referrer.email.toLowerCase() !== created.customerEmail.toLowerCase()) {
+          const isMonthly = (
+            created.durationDays >= 28 ||
+            String(created.duration || '').toLowerCase().includes('month') ||
+            String(created.duration || '').includes('30')
+          );
+
+          await Referral.create({
+            referralId: `REF-${Math.floor(1000 + Math.random() * 9000)}`,
+            referrerEmail: referrer.email,
+            referrerName: referrer.name,
+            referrerPhone: referrer.phone || '',
+            referralCode: cleanRefCode,
+            refereeEmail: created.customerEmail,
+            refereeName: created.customerName,
+            refereePhone: created.customerPhone,
+            subId: created.subId,
+            planTitle: created.planTitle,
+            duration: created.duration,
+            durationDays: created.durationDays,
+            isMonthlyPlan: isMonthly,
+            rewardAmount: 500,
+            subscriptionStatus: created.status,
+            payoutStatus: 'Pending'
+          });
+
+          created.referredBy = referrer.email;
+          await created.save();
+
+          try {
+            await Notification.create({
+              notificationId: `NOTIF-${Date.now()}`,
+              userId: referrer.email,
+              title: 'Friend Subscribed via Your Referral! 🎁',
+              message: `${created.customerName} subscribed to ${created.planTitle} (${created.duration}) using your code. Once they complete the monthly plan, you earn ₹500!`,
+              type: 'referral',
+              read: false,
+              createdAt: new Date()
+            });
+          } catch {}
+        }
+      } catch (refErr) {
+        console.warn('[SubscriptionController] Referral creation notice:', refErr);
+      }
+    }
+
+    // Record corresponding Sale for Admin Accounting & Analytics
+    try {
+      const isCod = String(created.paymentMethod).toLowerCase().includes('cash');
+      const isUpi = String(created.paymentMethod).toLowerCase().includes('upi');
+      const salePaymentMethod = isCod ? 'Cash' : (isUpi ? 'UPI' : 'Credit/Debit Card');
+      const saleCategory = created.planTitle.toLowerCase().includes('weight') 
+        ? 'Weight Loss' 
+        : created.planTitle.toLowerCase().includes('muscle') 
+        ? 'Muscle Gain' 
+        : 'Balanced Health';
+
+      await Sale.create({
+        saleId: `SLS-${created.subId}-${Math.floor(100 + Math.random() * 900)}`,
+        source: 'Subscription',
+        customerName: created.customerName,
+        customerEmail: created.customerEmail,
+        customerPhone: created.customerPhone,
+        description: `${created.planTitle} Subscription (${created.duration})`,
+        category: saleCategory,
+        quantity: 1,
+        unitPrice: created.totalPrice,
+        totalAmount: created.totalPrice,
+        durationDays: created.durationDays,
+        paymentMethod: salePaymentMethod,
+        paymentStatus: isCod ? 'Pending' : 'Completed',
+        paymentReference: created.razorpayPaymentId || created.razorpayOrderId || created.subId,
+        saleDate: new Date().toISOString().split('T')[0],
+        linkedId: created.subId,
+        invoiceNotes: `Shift24 Subscription order ${created.subId}. Gateway: ${created.paymentMethod}.`
+      });
+    } catch (saleErr) {
+      console.warn('[SubscriptionController] Sale sync notice:', saleErr);
+    }
 
     // Trigger Web Push to Customer and Admin
     try {
@@ -298,6 +394,18 @@ export const updateSubscriptionStatus = async (req: Request, res: Response) => {
     try {
       await syncCustomerFromSubscription(updated);
     } catch {}
+
+    // When subscription is completed, update any eligible monthly referral for admin payout
+    if (status === 'Completed') {
+      try {
+        await Referral.updateMany(
+          { subId: updated.subId, isMonthlyPlan: true, payoutStatus: 'Pending' },
+          { $set: { subscriptionStatus: 'Completed', payoutStatus: 'Eligible', completedAt: new Date() } }
+        );
+      } catch (refErr) {
+        console.warn('[SubscriptionController] Referral update notice on completion:', refErr);
+      }
+    }
 
     // When subscription is paused or cancelled, automatically delete non-delivered orders
     if (status === 'Paused' || status === 'Cancelled') {

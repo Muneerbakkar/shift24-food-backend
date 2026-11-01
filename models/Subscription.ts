@@ -27,6 +27,13 @@ export interface ISubscription {
   skippedMeals?: string[];
   pauseStartDate?: string;
   pauseEndDate?: string;
+  paymentMethod?: string;
+  paymentStatus?: 'Pending' | 'Paid' | 'Failed' | 'Cash on Delivery';
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  razorpaySignature?: string;
+  referralCode?: string;
+  referredBy?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -61,6 +68,17 @@ const SubscriptionSchema = new Schema<ISubscription>({
   skippedMeals: { type: [String], default: [] },
   pauseStartDate: { type: String, default: null },
   pauseEndDate: { type: String, default: null },
+  paymentMethod: { type: String, default: 'Razorpay' },
+  paymentStatus: { 
+    type: String, 
+    enum: ['Pending', 'Paid', 'Failed', 'Cash on Delivery'], 
+    default: 'Pending' 
+  },
+  razorpayOrderId: { type: String, default: '' },
+  razorpayPaymentId: { type: String, default: '' },
+  razorpaySignature: { type: String, default: '' },
+  referralCode: { type: String, default: '' },
+  referredBy: { type: String, default: '' },
 }, {
   timestamps: true
 });

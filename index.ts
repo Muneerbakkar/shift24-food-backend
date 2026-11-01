@@ -21,6 +21,9 @@ import driverRoutes from './routes/driverRoutes';
 import settingsRoutes from './routes/settingsRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import pushRoutes from './routes/pushRoutes';
+import paymentRoutes from './routes/paymentRoutes';
+import referralRoutes from './routes/referralRoutes';
+import { createRazorpayOrder, verifyRazorpayPayment, getRazorpayKey } from './controllers/paymentController';
 
 import path from 'path';
 
@@ -28,6 +31,7 @@ dotenv.config();
 try {
   dotenv.config({ path: path.resolve(process.cwd(), 'backend', '.env'), override: true });
   dotenv.config({ path: path.resolve(__dirname, '.env'), override: true });
+  dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
 } catch (e) {}
 
 const app = express();
@@ -153,6 +157,11 @@ app.use('/api/drivers', driverRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/push', pushRoutes);
+app.use('/api/referrals', referralRoutes);
+app.use('/api/payment', paymentRoutes);
+app.post('/api/create-order', createRazorpayOrder);
+app.post('/api/verify-payment', verifyRazorpayPayment);
+app.get('/api/razorpay-key', getRazorpayKey);
 app.use('/api/geocode', geocodeRoutes);
 app.use('/api', menuRoutes); // handles /api/plans and /api/menu
 

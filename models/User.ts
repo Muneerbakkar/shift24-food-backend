@@ -16,6 +16,7 @@ export interface IUser {
   }>;
   totalSpent: number;
   totalOrders: number;
+  referralCode?: string;
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
   createdAt?: Date;
@@ -38,6 +39,7 @@ const UserSchema = new Schema<IUser>({
   }],
   totalSpent: { type: Number, default: 0 },
   totalOrders: { type: Number, default: 0 },
+  referralCode: { type: String, sparse: true, uppercase: true, trim: true },
   resetPasswordToken: { type: String },
   resetPasswordExpires: { type: Date },
 }, {
