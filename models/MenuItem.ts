@@ -23,6 +23,7 @@ export interface IMenuItem {
   fat?: string;
   benefits?: string[];
   image?: string;
+  images?: string[];
   microNutrients?: IMicroNutrient[];
   ingredients?: IIngredientItem[];
   createdAt?: Date;
@@ -41,6 +42,7 @@ const MenuItemSchema = new Schema<IMenuItem>({
   fat: { type: String, default: '15g' },
   benefits: { type: [String], default: [] },
   image: { type: String, default: '' },
+  images: { type: [String], default: [] },
   microNutrients: {
     type: [{
       name: { type: String, required: true },

@@ -23,6 +23,7 @@ import notificationRoutes from './routes/notificationRoutes';
 import pushRoutes from './routes/pushRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import referralRoutes from './routes/referralRoutes';
+import uploadRoutes from './routes/uploadRoutes';
 import { createRazorpayOrder, verifyRazorpayPayment, getRazorpayKey } from './controllers/paymentController';
 
 import path from 'path';
@@ -70,7 +71,8 @@ app.use(cors({
 }));
 
 // 2. Body & Cookie Parsing
-app.use(express.json());
+// Raised limit: dish images are sent as base64 data URIs to /api/uploads/image
+app.use(express.json({ limit: '12mb' }));
 app.use(cookieParser());
 
 import mongoose from 'mongoose';
@@ -159,6 +161,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/uploads', uploadRoutes);
 app.post('/api/create-order', createRazorpayOrder);
 app.post('/api/verify-payment', verifyRazorpayPayment);
 app.get('/api/razorpay-key', getRazorpayKey);

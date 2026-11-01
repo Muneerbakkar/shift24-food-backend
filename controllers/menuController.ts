@@ -199,6 +199,7 @@ export const saveMenuItem = async (req: Request, res: Response) => {
       fat, 
       benefits, 
       image,
+      images,
       microNutrients,
       ingredients
     } = req.body;
@@ -209,6 +210,16 @@ export const saveMenuItem = async (req: Request, res: Response) => {
 
     const normalizedPlanId = String(planId).trim().toLowerCase();
     const normalizedMealType = String(mealType).trim().toLowerCase() as 'breakfast' | 'lunch' | 'dinner';
+
+    // A dish must belong to a plan that exists, otherwise it becomes an orphan row
+    // that no plan screen or customer menu can ever show.
+    const planExists = await Plan.exists({ planId: normalizedPlanId });
+    if (!planExists) {
+      return res.status(400).json({
+        success: false,
+        message: `No meal plan exists with id "${normalizedPlanId}". Create or select a real plan before assigning dishes to it.`
+      });
+    }
 
     const itemObj = {
       planId: normalizedPlanId,
@@ -222,6 +233,10 @@ export const saveMenuItem = async (req: Request, res: Response) => {
       fat: fat ? String(fat).trim() : '15g',
       benefits: Array.isArray(benefits) ? benefits : typeof benefits === 'string' ? benefits.split(',').map((b: string) => b.trim()).filter(Boolean) : [],
       image: image ? String(image).trim() : '',
+      // Gallery images (the cover stays in `image`); order is what the admin panel shows.
+      images: Array.isArray(images)
+        ? images.map((url: any) => String(url || '').trim()).filter(Boolean).slice(0, 12)
+        : [],
       microNutrients: Array.isArray(microNutrients) ? microNutrients : [],
       ingredients: Array.isArray(ingredients) ? ingredients : []
     };
