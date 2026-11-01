@@ -21,6 +21,7 @@ export interface IMenuItem {
   protein?: string;
   carbs?: string;
   fat?: string;
+  fiber?: string;
   benefits?: string[];
   image?: string;
   images?: string[];
@@ -40,6 +41,7 @@ const MenuItemSchema = new Schema<IMenuItem>({
   protein: { type: String, default: '20g' },
   carbs: { type: String, default: '40g' },
   fat: { type: String, default: '15g' },
+  fiber: { type: String, default: '' },
   benefits: { type: [String], default: [] },
   image: { type: String, default: '' },
   images: { type: [String], default: [] },

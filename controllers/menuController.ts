@@ -197,6 +197,7 @@ export const saveMenuItem = async (req: Request, res: Response) => {
       protein, 
       carbs, 
       fat, 
+      fiber,
       benefits, 
       image,
       images,
@@ -231,6 +232,7 @@ export const saveMenuItem = async (req: Request, res: Response) => {
       protein: protein ? String(protein).trim() : '20g',
       carbs: carbs ? String(carbs).trim() : '40g',
       fat: fat ? String(fat).trim() : '15g',
+      fiber: fiber ? String(fiber).trim() : '',
       benefits: Array.isArray(benefits) ? benefits : typeof benefits === 'string' ? benefits.split(',').map((b: string) => b.trim()).filter(Boolean) : [],
       image: image ? String(image).trim() : '',
       // Gallery images (the cover stays in `image`); order is what the admin panel shows.
