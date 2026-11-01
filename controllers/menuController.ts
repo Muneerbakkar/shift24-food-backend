@@ -160,7 +160,12 @@ export const getWeeklyMenu = async (req: Request, res: Response) => {
     const query: any = {};
 
     if (planId && planId !== 'all') {
-      query.planId = String(planId).toLowerCase().trim();
+      const p = String(planId).toLowerCase().trim();
+      if (p === 'healthy-food' || p === 'balance' || p === 'healthy_food') {
+        query.planId = { $in: ['healthy-food', 'balance', 'healthy_food'] };
+      } else {
+        query.planId = p;
+      }
     }
     if (day) {
       query.day = Number(day);
