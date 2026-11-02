@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
+import { Role } from '../models/Role';
 import { Driver } from '../models/Driver';
 import { Subscription } from '../models/Subscription';
 import { isConnectedToDb } from '../config/db';
@@ -15,7 +16,7 @@ const JWT_EXPIRES_IN = '7d';
 /** Admin panel sections a team member can be granted. */
 export const ADMIN_PERMISSION_KEYS = [
   'dashboard', 'sales', 'subscriptions', 'orders', 'drivers', 'kitchen', 'menu',
-  'purchases', 'expenses', 'customers', 'referrals', 'users', 'activity', 'settings'
+  'purchases', 'expenses', 'customers', 'referrals', 'users', 'roles', 'activity', 'settings'
 ];
 
 const sanitizePermissions = (value: unknown): string[] => {
@@ -1012,14 +1013,18 @@ export const createAdminUser = async (req: AuthRequest, res: Response) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    const validRole = ['admin', 'staff', 'kitchen', 'customer'].includes(role) ? role : 'customer';
-    const defaultTitle = validRole === 'admin' 
-      ? 'Super Administrator' 
-      : validRole === 'kitchen' 
-      ? 'Kitchen Manager' 
-      : validRole === 'staff' 
-      ? 'Staff Administrator' 
-      : 'Customer';
+    // Role may be a built-in one or any custom role from the roles collection.
+    const requestedRole = String(role || 'staff').trim().toLowerCase();
+    const builtInRoles = ['admin', 'staff', 'kitchen'];
+    const roleDoc = builtInRoles.includes(requestedRole)
+      ? null
+      : await Role.findOne({ roleId: requestedRole });
+    const validRole = builtInRoles.includes(requestedRole) || roleDoc ? requestedRole : 'staff';
+    const defaultTitle =
+      validRole === 'admin' ? 'Super Administrator'
+        : validRole === 'kitchen' ? 'Kitchen Manager'
+          : validRole === 'staff' ? 'Staff Administrator'
+            : (roleDoc?.name || 'Staff Administrator');
 
     const newUser = await User.create({
       name: name.trim(),
@@ -1027,7 +1032,9 @@ export const createAdminUser = async (req: AuthRequest, res: Response) => {
       password: hashedPassword,
       phone: phone ? phone.trim() : '+91 98451 00000',
       role: validRole,
-      permissions: sanitizePermissions(permissions),
+      permissions: permissions !== undefined
+        ? sanitizePermissions(permissions)
+        : sanitizePermissions(roleDoc?.permissions || []),
       adminTitle: adminTitle ? adminTitle.trim() : defaultTitle,
       status: 'active',
       addresses: [{ title: 'Operations Office', address: 'MG Road, Kochi, Kerala', isDefault: true }],
@@ -1075,8 +1082,21 @@ export const updateAdminUser = async (req: AuthRequest, res: Response) => {
 
     if (name) user.name = name.trim();
     if (phone !== undefined) user.phone = phone.trim();
-    if (role && ['admin', 'staff', 'kitchen', 'customer'].includes(role)) {
-      user.role = role;
+    if (role) {
+      const requestedRole = String(role).trim().toLowerCase();
+      const builtInRoles = ['admin', 'staff', 'kitchen'];
+      const roleDoc = builtInRoles.includes(requestedRole)
+        ? null
+        : await Role.findOne({ roleId: requestedRole });
+      if (builtInRoles.includes(requestedRole) || roleDoc) {
+        const roleChanged = user.role !== requestedRole;
+        user.role = requestedRole;
+        // Switching to a custom role adopts that role's sections unless the
+        // caller passed an explicit per-user permission list.
+        if (roleChanged && permissions === undefined && roleDoc) {
+          user.permissions = sanitizePermissions(roleDoc.permissions || []);
+        }
+      }
     }
     if (adminTitle !== undefined) user.adminTitle = adminTitle.trim();
     if (permissions !== undefined) {

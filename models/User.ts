@@ -6,7 +6,7 @@ export interface IUser {
   password?: string;
   phone?: string;
   phoneVerified?: boolean;
-  role: 'customer' | 'admin' | 'staff' | 'kitchen' | 'driver';
+  role: string;
   permissions?: string[];
   adminTitle?: string;
   status?: 'active' | 'inactive';
@@ -31,7 +31,8 @@ const UserSchema = new Schema<IUser>({
   password: { type: String, default: 'demo123' },
   phone: { type: String, default: '+91 98451 22345' },
   phoneVerified: { type: Boolean, default: false },
-  role: { type: String, enum: ['customer', 'admin', 'staff', 'kitchen', 'driver'], default: 'customer' },
+  // Role slug: customer/driver are fixed; admin/staff/kitchen or any custom role from the roles collection
+  role: { type: String, default: 'customer' },
   // Section keys this team member may open in the admin panel (empty = role default)
   permissions: { type: [String], default: [] },
   adminTitle: { type: String, default: 'Administrator' },
