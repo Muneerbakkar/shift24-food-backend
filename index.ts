@@ -59,7 +59,7 @@ const allowedOrigins = [
   'http://127.0.0.1:5173',
   'https://shift24.in',
   'https://www.shift24.in',
-  'https://shift24-food-frontend.vercel.app/',
+  'https://shift24-food-frontend.vercel.app',
   ...(process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',').map((u) => u.trim()).filter(Boolean) : []),
   ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map((u) => u.trim()).filter(Boolean) : [])
 ];
