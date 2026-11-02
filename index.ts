@@ -253,7 +253,14 @@ app.use('/api/sales', can.sales, salesRoutes);
 app.use('/api/drivers', driverGuard, driverRoutes);
 app.use('/api/settings', writesGuarded(can.settings), settingsRoutes);
 app.use('/api/notifications', requireAuth, notificationRoutes);
-app.use('/api/push', requireAuth, pushRoutes);
+const pushGuard = (req: any, res: any, next: any) => {
+  if (['/vapid-public-key', '/subscribe', '/unsubscribe'].includes(req.path)) {
+    return next();
+  }
+  return requireAuth(req, res, next);
+};
+
+app.use('/api/push', pushGuard, pushRoutes);
 app.use('/api/referrals', referralGuard, referralRoutes);
 app.use('/api/payment', paymentGuard, paymentRoutes);
 app.use('/api/uploads', uploadGuard, uploadRoutes);

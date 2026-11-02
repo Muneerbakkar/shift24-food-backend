@@ -125,8 +125,11 @@ export const subscribeDevice = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Invalid push subscription payload' });
     }
 
-    const assignedRole = role === 'admin' || role === 'driver' ? role : 'customer';
-    const cleanEmail = (email || '').toLowerCase().trim();
+    const authUser = (req as any).user;
+    const assignedRole = authUser?.role || (role === 'admin' || role === 'driver' ? role : 'customer');
+    const cleanEmail = (authUser?.email || email || '').toLowerCase().trim();
+    const cleanName = authUser?.name || name || '';
+    const cleanUserId = authUser?._id?.toString() || authUser?.id || userId || '';
 
     const updated = await DevicePushSubscription.findOneAndUpdate(
       { endpoint: subscription.endpoint },
@@ -136,8 +139,8 @@ export const subscribeDevice = async (req: Request, res: Response) => {
           keys: subscription.keys,
           role: assignedRole,
           email: cleanEmail,
-          userId: userId || '',
-          name: name || '',
+          userId: cleanUserId,
+          name: cleanName,
           device: device || (req.headers['user-agent']?.includes('iPhone') ? 'iOS Device' : req.headers['user-agent']?.includes('Android') ? 'Android Device' : 'Web Device')
         }
       },
