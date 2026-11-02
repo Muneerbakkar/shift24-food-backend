@@ -11,7 +11,7 @@ import { sendPasswordResetEmail } from '../services/emailService';
 const JWT_SECRET = process.env.JWT_SECRET || 'shift24_super_secure_jwt_secret_key_2026';
 const JWT_EXPIRES_IN = '7d';
 
-function generateToken(user: any) {
+export function generateToken(user: any) {
   return jwt.sign(
     { id: user._id || user.id, email: user.email, role: user.role, name: user.name },
     JWT_SECRET,
@@ -19,7 +19,7 @@ function generateToken(user: any) {
   );
 }
 
-function setSessionAndCookie(req: Request, res: Response, user: any, token: string) {
+export function setSessionAndCookie(req: Request, res: Response, user: any, token: string) {
   // 1. Set Express session
   if ((req as any).session) {
     (req as any).session.user = {

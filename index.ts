@@ -24,6 +24,7 @@ import pushRoutes from './routes/pushRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import referralRoutes from './routes/referralRoutes';
 import uploadRoutes from './routes/uploadRoutes';
+import { getSmsProvider } from './services/smsService';
 import { createRazorpayOrder, verifyRazorpayPayment, getRazorpayKey } from './controllers/paymentController';
 
 import path from 'path';
@@ -188,6 +189,8 @@ async function startServer() {
     console.log(`📦 MongoDB Status: ${isConnectedToDb ? 'Connected' : 'Fallback Mode Active'}`);
     console.log(`🔐 JWT & Session Auth: Enabled`);
     console.log(`✉️  Live SMTP: ${smtpReady ? `configured (${smtpUser})` : 'NOT configured — reset codes fall back to a test inbox'}`);
+    const sms = getSmsProvider();
+    console.log(`📱 Customer OTP SMS: ${sms.configured ? `configured (${sms.provider})` : 'NOT configured — codes are printed to this log'}`);
     console.log(`===========================================`);
   });
 }

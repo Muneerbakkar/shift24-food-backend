@@ -5,6 +5,7 @@ export interface IUser {
   email: string;
   password?: string;
   phone?: string;
+  phoneVerified?: boolean;
   role: 'customer' | 'admin' | 'staff' | 'kitchen' | 'driver';
   adminTitle?: string;
   status?: 'active' | 'inactive';
@@ -28,6 +29,7 @@ const UserSchema = new Schema<IUser>({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, default: 'demo123' },
   phone: { type: String, default: '+91 98451 22345' },
+  phoneVerified: { type: Boolean, default: false },
   role: { type: String, enum: ['customer', 'admin', 'staff', 'kitchen', 'driver'], default: 'customer' },
   adminTitle: { type: String, default: 'Administrator' },
   status: { type: String, enum: ['active', 'inactive'], default: 'active' },

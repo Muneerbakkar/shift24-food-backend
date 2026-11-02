@@ -17,6 +17,7 @@ import {
   deleteAdminUser
 } from '../controllers/authController';
 import { driverLogin } from '../controllers/driverController';
+import { requestOtp, verifyOtp } from '../controllers/otpController';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -26,6 +27,10 @@ router.post('/register', register);
 router.post('/login', login);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
+
+// Customer OTP login (phone + SMS code)
+router.post('/otp/request', requestOtp);
+router.post('/otp/verify', verifyOtp);
 
 // Driver routes
 router.post('/driver-login', driverLogin);
