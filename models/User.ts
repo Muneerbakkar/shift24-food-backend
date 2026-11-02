@@ -7,6 +7,7 @@ export interface IUser {
   phone?: string;
   phoneVerified?: boolean;
   role: 'customer' | 'admin' | 'staff' | 'kitchen' | 'driver';
+  permissions?: string[];
   adminTitle?: string;
   status?: 'active' | 'inactive';
   allergies: string[];
@@ -31,6 +32,8 @@ const UserSchema = new Schema<IUser>({
   phone: { type: String, default: '+91 98451 22345' },
   phoneVerified: { type: Boolean, default: false },
   role: { type: String, enum: ['customer', 'admin', 'staff', 'kitchen', 'driver'], default: 'customer' },
+  // Section keys this team member may open in the admin panel (empty = role default)
+  permissions: { type: [String], default: [] },
   adminTitle: { type: String, default: 'Administrator' },
   status: { type: String, enum: ['active', 'inactive'], default: 'active' },
   allergies: { type: [String], default: [] },

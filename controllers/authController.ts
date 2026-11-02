@@ -12,6 +12,19 @@ import { sendPasswordResetEmail } from '../services/emailService';
 const JWT_SECRET = process.env.JWT_SECRET || 'shift24_super_secure_jwt_secret_key_2026';
 const JWT_EXPIRES_IN = '7d';
 
+/** Admin panel sections a team member can be granted. */
+export const ADMIN_PERMISSION_KEYS = [
+  'dashboard', 'sales', 'subscriptions', 'orders', 'drivers', 'kitchen', 'menu',
+  'purchases', 'expenses', 'customers', 'referrals', 'users', 'activity', 'settings'
+];
+
+const sanitizePermissions = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map(v => String(v).trim().toLowerCase()))).filter(p =>
+    ADMIN_PERMISSION_KEYS.includes(p)
+  );
+};
+
 export function generateToken(user: any) {
   return jwt.sign(
     { id: user._id || user.id, email: user.email, role: user.role, name: user.name },
@@ -947,8 +960,9 @@ export const getAdminUsers = async (req: AuthRequest, res: Response) => {
     }
 
     const { role } = req.query;
-    const query: any = {};
-    if (role && role !== 'all') {
+    // Customers live on the Customers page — the Users page lists the team only.
+    const query: any = { role: { $ne: 'customer' } };
+    if (role && role !== 'all' && role !== 'customer') {
       query.role = role;
     }
 
@@ -965,7 +979,7 @@ export const getAdminUsers = async (req: AuthRequest, res: Response) => {
 
 export const createAdminUser = async (req: AuthRequest, res: Response) => {
   try {
-    const { name, email, password, phone, role, adminTitle } = req.body;
+    const { name, email, password, phone, role, adminTitle, permissions } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({
@@ -1013,6 +1027,7 @@ export const createAdminUser = async (req: AuthRequest, res: Response) => {
       password: hashedPassword,
       phone: phone ? phone.trim() : '+91 98451 00000',
       role: validRole,
+      permissions: sanitizePermissions(permissions),
       adminTitle: adminTitle ? adminTitle.trim() : defaultTitle,
       status: 'active',
       addresses: [{ title: 'Operations Office', address: 'MG Road, Kochi, Kerala', isDefault: true }],
@@ -1028,6 +1043,7 @@ export const createAdminUser = async (req: AuthRequest, res: Response) => {
       email: newUser.email,
       phone: newUser.phone,
       role: newUser.role,
+      permissions: newUser.permissions || [],
       adminTitle: newUser.adminTitle,
       status: newUser.status,
       createdAt: newUser.createdAt
@@ -1046,7 +1062,7 @@ export const createAdminUser = async (req: AuthRequest, res: Response) => {
 export const updateAdminUser = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, phone, role, adminTitle, status, password } = req.body;
+    const { name, phone, role, adminTitle, status, password, permissions } = req.body;
 
     if (!isConnectedToDb) {
       return res.status(503).json({ success: false, message: 'MongoDB database is not connected' });
@@ -1063,6 +1079,9 @@ export const updateAdminUser = async (req: AuthRequest, res: Response) => {
       user.role = role;
     }
     if (adminTitle !== undefined) user.adminTitle = adminTitle.trim();
+    if (permissions !== undefined) {
+      user.permissions = sanitizePermissions(permissions);
+    }
     if (status && ['active', 'inactive'].includes(status)) {
       const defaultEmail = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@shift24.com').toLowerCase().trim();
       if (user.email === defaultEmail && status === 'inactive') {
@@ -1088,6 +1107,7 @@ export const updateAdminUser = async (req: AuthRequest, res: Response) => {
       email: user.email,
       phone: user.phone,
       role: user.role,
+      permissions: user.permissions || [],
       adminTitle: user.adminTitle,
       status: user.status,
       createdAt: user.createdAt,

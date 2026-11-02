@@ -24,6 +24,8 @@ import pushRoutes from './routes/pushRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import referralRoutes from './routes/referralRoutes';
 import uploadRoutes from './routes/uploadRoutes';
+import activityRoutes from './routes/activityRoutes';
+import { activityLogger } from './middleware/activityLog';
 import { getSmsProvider } from './services/smsService';
 import { createRazorpayOrder, verifyRazorpayPayment, getRazorpayKey } from './controllers/paymentController';
 
@@ -75,6 +77,9 @@ app.use(cors({
 // Raised limit: dish images are sent as base64 data URIs to /api/uploads/image
 app.use(express.json({ limit: '12mb' }));
 app.use(cookieParser());
+
+// Activity log: records every state-changing API call (POST/PUT/PATCH/DELETE)
+app.use(activityLogger);
 
 import mongoose from 'mongoose';
 
@@ -163,6 +168,7 @@ app.use('/api/push', pushRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/activity', activityRoutes);
 app.post('/api/create-order', createRazorpayOrder);
 app.post('/api/verify-payment', verifyRazorpayPayment);
 app.get('/api/razorpay-key', getRazorpayKey);
