@@ -26,8 +26,12 @@ async function seed() {
       MenuItem.deleteMany({})
     ]);
 
-    const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@shift24.com';
-    const adminPass = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
+    // Seeding must not create an account with a built-in password.
+    const adminEmail = (process.env.DEFAULT_ADMIN_EMAIL || '').trim().toLowerCase();
+    const adminPass = process.env.DEFAULT_ADMIN_PASSWORD || '';
+    if (!adminEmail || !adminPass) {
+      throw new Error('DEFAULT_ADMIN_EMAIL and DEFAULT_ADMIN_PASSWORD must be set before seeding.');
+    }
     const adminHash = await bcrypt.hash(adminPass, 10);
     const demoHash = await bcrypt.hash('demo123', 10);
 

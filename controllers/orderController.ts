@@ -743,6 +743,32 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
       conditions.push({ _id: id });
     }
 
+    // Only admin-panel users may advance a delivery. A driver may update an
+    // order assigned to them, and a customer may cancel their own order.
+    const caller = (req as any).user;
+    const role = String(caller?.role || '');
+    const isStaff = ['admin', 'staff', 'kitchen'].includes(role);
+
+    const existingOrder = await Order.findOne({ $or: conditions }).select('orderId driverId customerEmail');
+    if (!existingOrder) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    if (!isStaff) {
+      const callerDriverIds = [caller?.driverId, caller?.id].filter(Boolean).map(String);
+      const isAssignedDriver = role === 'driver' && Boolean(existingOrder.driverId) &&
+        callerDriverIds.includes(String(existingOrder.driverId));
+      const isOwnCancellation = status === 'Cancelled' && Boolean(caller?.email) &&
+        String(existingOrder.customerEmail || '').toLowerCase() === String(caller.email).toLowerCase();
+
+      if (!isAssignedDriver && !isOwnCancellation) {
+        return res.status(403).json({
+          success: false,
+          message: 'You are not allowed to change the status of this order.'
+        });
+      }
+    }
+
     const updateFields: any = { status };
     if (typeof distanceFromHub === 'number' && !isNaN(distanceFromHub)) {
       updateFields.distanceFromHub = distanceFromHub;

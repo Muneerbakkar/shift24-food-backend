@@ -178,7 +178,7 @@ export async function sendPasswordResetEmail({
         : 'Live SMTP credentials are not set (EMAIL_USER / EMAIL_PASS in backend/.env)'
     };
   } catch (etherealErr) {
-    console.log(`[Shift24 Email (Console Only)] Code for ${toEmail}: ${resetCode}`);
+    console.log(`[Shift24 Email (Console Only)] Reset code for ${toEmail}`);
     return {
       sent: false,
       provider: 'simulated',

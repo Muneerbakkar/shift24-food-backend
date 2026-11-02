@@ -1,7 +1,9 @@
 import { sendPushNotification } from './pushController';
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { Subscription } from '../models/Subscription';
+import { Plan } from '../models/Plan';
 import { Order } from '../models/Order';
 import { Sale } from '../models/Sale';
 import { Referral } from '../models/Referral';
@@ -163,13 +165,198 @@ export const getSubscriptionById = async (req: Request, res: Response) => {
   }
 };
 
+const STAFF_ROLES = new Set(['admin', 'staff', 'kitchen']);
+
+/** Admin-panel users may set prices and statuses themselves. */
+function isStaffUser(user: any): boolean {
+  const role = String(user?.role || '');
+  // Mirrors requireStaff: anything that is not a customer or a driver is staff.
+  if (!role) return false;
+  return STAFF_ROLES.has(role) || (role !== 'customer' && role !== 'driver');
+}
+
+/**
+ * Lowest price the plan allows for this duration / meal count / slot.
+ * Used only to reject underpayment — it never decides what the customer pays.
+ */
+async function computePriceFloor(
+  planId: string,
+  durationDays: number,
+  mealsPerDay: string,
+  slot: string
+): Promise<number | null> {
+  const plan: any = await Plan.findOne({ planId }).lean();
+  if (!plan) return null;
+
+  const durations: any[] = Array.isArray(plan.durationOptions) ? plan.durationOptions : [];
+  const option = durations.find((d: any) => Number(d?.days) === Number(durationDays));
+
+  if (option) {
+    const candidates: number[] = [];
+    const push = (value: any) => {
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0) candidates.push(n);
+    };
+
+    push(option?.slotPrices?.[slot]);
+    if (option.prices) Object.values(option.prices).forEach(push);
+    push(option.price);
+    push(option.customPrice);
+
+    // Prefer the price that matches the exact selection, then fall back.
+    const slotPrice = Number(option?.slotPrices?.[slot]);
+    if (Number.isFinite(slotPrice) && slotPrice > 0) return slotPrice;
+
+    const mealPrice = Number(option?.prices?.[mealsPerDay]);
+    if (Number.isFinite(mealPrice) && mealPrice > 0) return mealPrice;
+
+    const flatPrice = Number(option?.price ?? option?.customPrice);
+    if (Number.isFinite(flatPrice) && flatPrice > 0) return flatPrice;
+
+    // Last resort: the cheapest option configured for this duration.
+    if (candidates.length > 0) return Math.min(...candidates);
+  }
+
+  // No explicit price on this duration: fall back to the weekly rate.
+  const weekly = Number(plan.pricePerWeek);
+  if (Number.isFinite(weekly) && weekly > 0 && durationDays > 0) {
+    return Math.round((weekly / 7) * durationDays);
+  }
+
+  return null;
+}
+
+/**
+ * Confirms a Razorpay payment: signature first, then the captured amount from
+ * the Razorpay API (the authoritative source — never the request body).
+ */
+async function verifyOnlinePayment(
+  orderId: string,
+  paymentId: string,
+  signature: string,
+  expectedAmount: number
+): Promise<{ ok: boolean; message?: string }> {
+  const keyId = process.env.RAZORPAY_KEY_ID?.trim();
+  const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+  if (!keyId || !keySecret) {
+    return { ok: false, message: 'Online payments are not configured on the server.' };
+  }
+
+  const expectedSignature = crypto
+    .createHmac('sha256', keySecret)
+    .update(`${orderId}|${paymentId}`)
+    .digest('hex');
+
+  const given = Buffer.from(String(signature));
+  const computed = Buffer.from(expectedSignature);
+  if (given.length !== computed.length || !crypto.timingSafeEqual(given, computed)) {
+    return { ok: false, message: 'Payment signature verification failed.' };
+  }
+
+  try {
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+    const response = await fetch(
+      `https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`,
+      { headers: { Authorization: `Basic ${auth}` } }
+    );
+    if (!response.ok) {
+      return { ok: false, message: 'Could not confirm the payment with Razorpay.' };
+    }
+
+    const payment: any = await response.json();
+    if (String(payment?.order_id || '') !== orderId) {
+      return { ok: false, message: 'The payment does not belong to this order.' };
+    }
+    if (!['captured', 'authorized'].includes(String(payment?.status))) {
+      return { ok: false, message: `Payment is not complete (status: ${payment?.status}).` };
+    }
+    if (Number(payment?.amount) !== Math.round(expectedAmount * 100)) {
+      return { ok: false, message: 'The amount paid does not match the plan price.' };
+    }
+
+    return { ok: true };
+  } catch {
+    return { ok: false, message: 'Could not reach Razorpay to confirm the payment.' };
+  }
+}
+
 export const createSubscription = async (req: Request, res: Response) => {
   try {
     if (!isConnectedToDb) {
       return res.status(503).json({ success: false, message: 'MongoDB database is not connected' });
     }
 
-    const subData = req.body;
+    const subData = req.body || {};
+    const caller = (req as any).user;
+    const staff = isStaffUser(caller);
+
+    const planIdValue = String(subData.planId || 'balance');
+    const durationDays = Number(subData.durationDays) || 7;
+    const mealsPerDay = subData.mealsPerDay ? String(subData.mealsPerDay) : '3';
+    const slotValue = subData.slot || 'all';
+
+    let totalPrice = Number(subData.totalPrice) || 0;
+    let status = String(subData.status || 'Active');
+    let paymentStatus = String(subData.paymentStatus || '');
+    let customerName = subData.customerName || 'Customer';
+    let customerEmail = (subData.customerEmail || '').toLowerCase().trim();
+    let customerPhone = subData.customerPhone || '';
+
+    if (!staff) {
+      if (!caller?.email) {
+        return res.status(401).json({ success: false, message: 'Please sign in to start a plan.' });
+      }
+
+      // Identity always comes from the signed-in account, never the body.
+      customerName = caller.name || customerName;
+      customerEmail = String(caller.email).toLowerCase().trim();
+      customerPhone = caller.phone || customerPhone;
+
+      const floor = await computePriceFloor(planIdValue, durationDays, mealsPerDay, slotValue);
+      if (floor === null) {
+        return res.status(400).json({ success: false, message: 'This plan is not available for purchase right now.' });
+      }
+      if (!Number.isFinite(totalPrice) || totalPrice < floor) {
+        return res.status(400).json({
+          success: false,
+          message: 'The price for this plan has changed. Please refresh the page and try again.'
+        });
+      }
+
+      const isCash = String(subData.paymentMethod || '').toLowerCase().includes('cash');
+      if (isCash) {
+        paymentStatus = 'Cash on Delivery';
+        status = 'Active';
+      } else {
+        const orderId = String(subData.razorpayOrderId || '');
+        const paymentId = String(subData.razorpayPaymentId || '');
+        const signature = String(subData.razorpaySignature || '');
+        if (!orderId || !paymentId || !signature) {
+          return res.status(400).json({
+            success: false,
+            message: 'A completed payment is required to start this plan.'
+          });
+        }
+
+        const verification = await verifyOnlinePayment(orderId, paymentId, signature, totalPrice);
+        if (!verification.ok) {
+          return res.status(400).json({
+            success: false,
+            message: verification.message || 'Payment could not be verified.'
+          });
+        }
+        paymentStatus = 'Paid';
+        status = 'Active';
+      }
+    }
+
+    if (!['Paid', 'Cash on Delivery', 'Pending', 'Failed'].includes(paymentStatus)) {
+      paymentStatus = 'Pending';
+    }
+    if (!['Active', 'Paused', 'Cancelled', 'Completed'].includes(status)) {
+      status = 'Active';
+    }
+
     const subId = subData.subId || subData.id || `SUB-${Math.floor(100 + Math.random() * 900)}`;
 
     const coords = await resolveSubscriptionCoords(
@@ -181,18 +368,18 @@ export const createSubscription = async (req: Request, res: Response) => {
 
     const newSubData: any = {
       subId,
-      customerName: subData.customerName || 'Customer',
-      customerEmail: (subData.customerEmail || '').toLowerCase().trim(),
-      customerPhone: subData.customerPhone || '',
-      planId: subData.planId || 'balance',
+      customerName,
+      customerEmail,
+      customerPhone,
+      planId: planIdValue,
       planTitle: subData.planTitle || 'Balanced Health',
       duration: subData.duration || '7 Days',
-      durationDays: Number(subData.durationDays) || 7,
-      mealsPerDay: subData.mealsPerDay ? String(subData.mealsPerDay) : '3',
-      slot: subData.slot || 'all',
+      durationDays,
+      mealsPerDay,
+      slot: slotValue,
       slotLabel: subData.slotLabel || 'All Meals',
-      totalPrice: Number(subData.totalPrice) || 0,
-      status: subData.status || 'Active',
+      totalPrice,
+      status,
       startDate: subData.startDate || new Date().toISOString(),
       endDate: subData.endDate || new Date(Date.now() + 7 * 86400000).toISOString(),
       nextDelivery: subData.nextDelivery || 'Tomorrow, 07:30 AM (Breakfast)',
@@ -205,7 +392,7 @@ export const createSubscription = async (req: Request, res: Response) => {
       skippedDates: Array.isArray(subData.skippedDates) ? subData.skippedDates : [],
       skippedMeals: Array.isArray(subData.skippedMeals) ? subData.skippedMeals : [],
       paymentMethod: subData.paymentMethod || 'Razorpay',
-      paymentStatus: subData.paymentStatus || (String(subData.paymentMethod || '').toLowerCase().includes('cash') ? 'Cash on Delivery' : 'Paid'),
+      paymentStatus,
       razorpayOrderId: subData.razorpayOrderId || '',
       razorpayPaymentId: subData.razorpayPaymentId || '',
       razorpaySignature: subData.razorpaySignature || '',

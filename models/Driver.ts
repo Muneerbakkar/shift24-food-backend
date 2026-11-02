@@ -22,7 +22,8 @@ const DriverSchema = new Schema<IDriver>({
   name: { type: String, required: true, trim: true },
   phone: { type: String, required: true, trim: true },
   email: { type: String, trim: true, lowercase: true },
-  password: { type: String, default: 'driver123' },
+  // No default: a driver without a password set cannot sign in.
+  password: { type: String },
   vehicleType: { 
     type: String, 
     enum: ['Motorcycle', 'Scooter', 'Car', 'Van', 'Bicycle'], 

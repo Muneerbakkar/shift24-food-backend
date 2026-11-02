@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
@@ -10,8 +11,41 @@ import { AuthRequest } from '../middleware/auth';
 import { normalizeIndianPhone } from '../utils/phone';
 import { sendPasswordResetEmail } from '../services/emailService';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'shift24_super_secure_jwt_secret_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.trim().length < 16) {
+  throw new Error('JWT_SECRET environment variable is required (minimum 16 characters).');
+}
 const JWT_EXPIRES_IN = '7d';
+
+/** Constant-time comparison for secrets (passwords, reset codes, admin keys). */
+function safeEqualSecret(a: unknown, b: unknown): boolean {
+  const left = Buffer.from(String(a ?? ''), 'utf8');
+  const right = Buffer.from(String(b ?? ''), 'utf8');
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+/**
+ * Primary administrator credentials. These come from the environment only —
+ * there is deliberately no built-in default email or password.
+ */
+function readPrimaryAdminCredentials(): { email: string; password: string } {
+  return {
+    email: (process.env.DEFAULT_ADMIN_EMAIL || '').toLowerCase().trim(),
+    password: process.env.DEFAULT_ADMIN_PASSWORD || ''
+  };
+}
+
+/** True only when the primary admin is configured and the credentials match. */
+function isPrimaryAdminLogin(email: string, password: string): boolean {
+  const primary = readPrimaryAdminCredentials();
+  return Boolean(
+    primary.email &&
+    primary.password &&
+    email === primary.email &&
+    safeEqualSecret(password, primary.password)
+  );
+}
 
 /** Admin panel sections a team member can be granted. */
 export const ADMIN_PERMISSION_KEYS = [
@@ -48,10 +82,14 @@ export function setSessionAndCookie(req: Request, res: Response, user: any, toke
   }
 
   // 2. Set HTTP-only Cookie for security & session persistence
+  const isProduction = process.env.NODE_ENV === 'production';
   res.cookie('token', token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: isProduction,
+    // In production the API is on a different registrable domain than the site
+    // (e.g. onrender.com vs shift24.in), so the cookie must be SameSite=None.
+    sameSite: isProduction ? 'none' : 'lax',
+    path: '/',
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   });
 }
@@ -86,10 +124,10 @@ export const register = async (req: Request, res: Response) => {
       });
     }
 
-    if (String(password).length < 6) {
+    if (String(password).length < 8) {
       return res.status(400).json({
         success: false,
-        message: 'Password must be at least 6 characters'
+        message: 'Password must be at least 8 characters'
       });
     }
 
@@ -183,11 +221,10 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    const defaultAdminEmail = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@shift24.com').toLowerCase().trim();
-    const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
-
     // 1. Direct Default Master Admin Authentication
-    if (cleanEmail === defaultAdminEmail && password === defaultAdminPassword) {
+    // Enabled only when both variables are configured — no built-in password.
+    const { email: defaultAdminEmail } = readPrimaryAdminCredentials();
+    if (isPrimaryAdminLogin(cleanEmail, password)) {
       const dbAdmin = await User.findOne({ email: defaultAdminEmail });
       const adminId = dbAdmin ? dbAdmin._id.toString() : 'admin_master';
 
@@ -224,12 +261,10 @@ export const login = async (req: Request, res: Response) => {
       });
 
       if (driver) {
-        const driverPass = driver.password || 'driver123';
+        const driverPass = String(driver.password || '');
         let isDriverPassMatch = false;
         if (driverPass.startsWith('$2b$') || driverPass.startsWith('$2a$')) {
-          isDriverPassMatch = await bcrypt.compare(password, driverPass);
-        } else {
-          isDriverPassMatch = driverPass === password;
+          isDriverPassMatch = await bcrypt.compare(String(password), driverPass);
         }
 
         if (isDriverPassMatch) {
@@ -269,13 +304,6 @@ export const login = async (req: Request, res: Response) => {
     let isMatch = false;
     if (user.password?.startsWith('$2b$') || user.password?.startsWith('$2a$')) {
       isMatch = await bcrypt.compare(password, user.password);
-    } else {
-      isMatch = user.password === password;
-      // Upgrade plain password to bcrypt hash on login
-      if (isMatch) {
-        user.password = await bcrypt.hash(password, 10);
-        await user.save();
-      }
     }
 
     if (!isMatch) {
@@ -347,16 +375,23 @@ export const adminRegister = async (req: Request, res: Response) => {
       });
     }
 
-    if (password.length < 6) {
+    if (password.length < 8) {
       return res.status(400).json({
         success: false,
-        message: 'Admin password must be at least 6 characters'
+        message: 'Admin password must be at least 8 characters'
       });
     }
 
-    // Optional admin security phrase validation (default: shift24admin)
-    const REQUIRED_KEY = process.env.ADMIN_KEY || 'shift24admin';
-    if (adminSecretCode && adminSecretCode !== REQUIRED_KEY) {
+    // The security key is required, with no default value. Omitting the field
+    // is not a way to skip this check.
+    const REQUIRED_KEY = (process.env.ADMIN_KEY || '').trim();
+    if (!REQUIRED_KEY) {
+      return res.status(503).json({
+        success: false,
+        message: 'Admin registration is disabled because ADMIN_KEY is not configured.'
+      });
+    }
+    if (!adminSecretCode || !safeEqualSecret(adminSecretCode, REQUIRED_KEY)) {
       return res.status(403).json({
         success: false,
         message: 'Invalid Admin Security Key'
@@ -402,14 +437,11 @@ export const adminRegister = async (req: Request, res: Response) => {
       role: 'admin'
     };
 
-    const token = generateToken(safeAdmin);
-    setSessionAndCookie(req, res, safeAdmin, token);
-
+    // Do not sign the caller in as the account they just created.
     return res.status(201).json({
       success: true,
       message: 'Admin account registered successfully!',
-      user: safeAdmin,
-      token
+      user: safeAdmin
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
@@ -439,11 +471,10 @@ export const adminLogin = async (req: Request, res: Response) => {
       });
     }
 
-    const defaultAdminEmail = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@shift24.com').toLowerCase().trim();
-    const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
-
     // 1. Direct Default Master Admin Authentication
-    if (cleanEmail === defaultAdminEmail && password === defaultAdminPassword) {
+    // Enabled only when both variables are configured — no built-in password.
+    const { email: defaultAdminEmail } = readPrimaryAdminCredentials();
+    if (isPrimaryAdminLogin(cleanEmail, password)) {
       const dbAdmin = await User.findOne({ email: defaultAdminEmail });
       const adminId = dbAdmin ? dbAdmin._id.toString() : 'admin_master';
 
@@ -488,12 +519,6 @@ export const adminLogin = async (req: Request, res: Response) => {
     let isMatch = false;
     if (user.password?.startsWith('$2b$') || user.password?.startsWith('$2a$')) {
       isMatch = await bcrypt.compare(password, user.password);
-    } else {
-      isMatch = user.password === password;
-      if (isMatch) {
-        user.password = await bcrypt.hash(password, 10);
-        await user.save();
-      }
     }
 
     if (!isMatch) {
@@ -711,10 +736,10 @@ export const changePassword = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (newPassword.length < 6) {
+    if (newPassword.length < 8) {
       return res.status(400).json({
         success: false,
-        message: 'New password must be at least 6 characters'
+        message: 'New password must be at least 8 characters'
       });
     }
 
@@ -731,8 +756,6 @@ export const changePassword = async (req: AuthRequest, res: Response) => {
     let isMatch = false;
     if (user.password?.startsWith('$2b$') || user.password?.startsWith('$2a$')) {
       isMatch = await bcrypt.compare(currentPassword, user.password);
-    } else {
-      isMatch = user.password === currentPassword;
     }
 
     if (!isMatch) {
@@ -756,82 +779,69 @@ export const changePassword = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// In-memory fallback store for reset codes
-const inMemoryResetCodes = new Map<string, { code: string; expires: number }>();
-
 // -------------------------------------------------------------
 // Forgot Password - Request Email Reset Code
+//
+// The code is delivered by email only: it is never returned in the HTTP
+// response and never written to the server log. Unknown addresses receive the
+// same response as known ones, so this endpoint cannot be used to discover
+// which email addresses have accounts.
 // -------------------------------------------------------------
 export const forgotPassword = async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
 
-    if (!email || !email.trim()) {
+    if (!email || !String(email).trim()) {
       return res.status(400).json({
         success: false,
         message: 'Please provide your email address'
       });
     }
 
-    const cleanEmail = email.toLowerCase().trim();
+    const cleanEmail = String(email).toLowerCase().trim();
 
     if (!isConnectedToDb) {
-      const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-      inMemoryResetCodes.set(cleanEmail, { code: resetCode, expires: Date.now() + 15 * 60 * 1000 });
-      return res.json({
-        success: true,
-        message: `Password reset code sent to ${cleanEmail}`,
-        resetCode: resetCode
+      return res.status(503).json({
+        success: false,
+        message: 'Password reset is temporarily unavailable. Please try again shortly.'
       });
     }
+
+    const genericMessage =
+      'If an account exists for this email, a 6-digit verification code has been sent. Please check your inbox and spam folder.';
 
     const user = await User.findOne({ email: cleanEmail });
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'No account found with this email address'
-      });
+      // Deliberately identical to the success response.
+      return res.json({ success: true, message: genericMessage });
     }
 
-    // Generate 6-digit verification code
-    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // Cryptographically strong 6-digit code.
+    const resetCode = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
     user.resetPasswordToken = resetCode;
     user.resetPasswordExpires = expiresAt;
     await user.save();
 
-    inMemoryResetCodes.set(cleanEmail, { code: resetCode, expires: Date.now() + 15 * 60 * 1000 });
-
-    console.log(`\n======================================================`);
-    console.log(`[Shift24 Security] PASSWORD RESET CODE FOR: ${cleanEmail}`);
-    console.log(`Verification Code: ${resetCode}`);
-    console.log(`Valid until: ${expiresAt.toLocaleTimeString()}`);
-    console.log(`======================================================\n`);
-
-    // Dispatch real email via nodemailer or test preview
     const emailResult = await sendPasswordResetEmail({
       toEmail: cleanEmail,
       userName: user.name || 'Valued Member',
       resetCode
     });
 
-    return res.json({
-      success: true,
-      message: emailResult.sent
-        ? `A 6-digit password reset verification code has been sent directly to ${cleanEmail}. Please check your inbox and spam folder.`
-        : emailResult.smtpError
-          ? `Verification code generated for ${cleanEmail}. Live email could not be sent: ${emailResult.smtpError}`
-          : `Verification code generated for ${cleanEmail}. (Live SMTP is not configured on the server)`,
-      emailSent: emailResult.sent,
-      emailConfigured: emailResult.configured,
-      emailError: emailResult.smtpError || undefined,
-      previewUrl: emailResult.previewUrl || undefined,
-      resetCode: resetCode,
-      provider: emailResult.provider
-    });
+    if (!emailResult.sent) {
+      console.warn(
+        `[Shift24 Security] Password reset email was not delivered to ${cleanEmail}: ${emailResult.smtpError || 'unknown error'}`
+      );
+    }
+
+    return res.json({ success: true, message: genericMessage });
   } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: 'Could not process the password reset request. Please try again.'
+    });
   }
 };
 
@@ -849,45 +859,39 @@ export const resetPassword = async (req: Request, res: Response) => {
       });
     }
 
-    if (newPassword.length < 6) {
+    if (String(newPassword).length < 8) {
       return res.status(400).json({
         success: false,
-        message: 'New password must be at least 6 characters'
+        message: 'New password must be at least 8 characters'
       });
     }
-
-    const cleanEmail = email.toLowerCase().trim();
-    const cleanCode = String(resetCode).trim();
 
     if (!isConnectedToDb) {
-      const stored = inMemoryResetCodes.get(cleanEmail);
-      if (!stored || stored.code !== cleanCode || Date.now() > stored.expires) {
-        return res.status(400).json({ success: false, message: 'Invalid or expired verification code' });
-      }
-      inMemoryResetCodes.delete(cleanEmail);
-      return res.json({
-        success: true,
-        message: 'Password reset successfully! You can now log in with your new password.'
+      return res.status(503).json({
+        success: false,
+        message: 'Password reset is temporarily unavailable. Please try again shortly.'
       });
     }
+
+    const cleanEmail = String(email).toLowerCase().trim();
+    const cleanCode = String(resetCode).trim();
+    const invalidCode = {
+      success: false,
+      message: 'Invalid or expired verification code. Please check the code or request a new one.'
+    };
 
     const user = await User.findOne({ email: cleanEmail });
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      // Same answer as a wrong code, so this cannot enumerate accounts.
+      return res.status(400).json(invalidCode);
     }
 
-    const memStored = inMemoryResetCodes.get(cleanEmail);
-    const validInMemory = memStored && memStored.code === cleanCode && Date.now() <= memStored.expires;
+    // A code is valid only while it has a future expiry.
+    const notExpired = Boolean(user.resetPasswordExpires) && new Date() <= new Date(user.resetPasswordExpires);
+    const codeMatches = Boolean(user.resetPasswordToken) && safeEqualSecret(user.resetPasswordToken, cleanCode);
 
-    const validInDb = user.resetPasswordToken && 
-      user.resetPasswordToken === cleanCode && 
-      (!user.resetPasswordExpires || new Date() <= new Date(user.resetPasswordExpires));
-
-    if (!validInMemory && !validInDb) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid or expired verification code. Please check the code or request a new one.'
-      });
+    if (!notExpired || !codeMatches) {
+      return res.status(400).json(invalidCode);
     }
 
     // Hash new password
@@ -896,8 +900,6 @@ export const resetPassword = async (req: Request, res: Response) => {
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     await user.save();
-
-    inMemoryResetCodes.delete(cleanEmail);
 
     return res.json({
       success: true,
@@ -937,12 +939,12 @@ export const getAdminUsers = async (req: AuthRequest, res: Response) => {
       return res.status(503).json({ success: false, message: 'MongoDB database is not connected' });
     }
 
-    const defaultAdminEmail = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@shift24.com').toLowerCase().trim();
-    const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
+    const { email: defaultAdminEmail, password: defaultAdminPassword } = readPrimaryAdminCredentials();
 
-    // Auto-seed default admin if not in DB so it always appears
-    const existingDefault = await User.findOne({ email: defaultAdminEmail });
-    if (!existingDefault) {
+    // Auto-seed the primary admin only when credentials are configured in the
+    // environment. There is no built-in fallback password.
+    const existingDefault = defaultAdminEmail ? await User.findOne({ email: defaultAdminEmail }) : null;
+    if (defaultAdminEmail && defaultAdminPassword && !existingDefault) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(defaultAdminPassword, salt);
       await User.create({
@@ -989,10 +991,10 @@ export const createAdminUser = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (password.length < 6) {
+    if (password.length < 8) {
       return res.status(400).json({
         success: false,
-        message: 'Password must be at least 6 characters'
+        message: 'Password must be at least 8 characters'
       });
     }
 
@@ -1113,7 +1115,7 @@ export const updateAdminUser = async (req: AuthRequest, res: Response) => {
       user.status = status;
     }
 
-    if (password && password.trim().length >= 6) {
+    if (password && password.trim().length >= 8) {
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(password.trim(), salt);
     }

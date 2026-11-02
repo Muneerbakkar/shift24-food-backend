@@ -121,7 +121,7 @@ export async function sendOtpSms(phoneE164: string, code: string): Promise<SmsRe
   }
 
   // 3. Console fallback (development)
-  console.log(`[Shift24 SMS] No SMS provider configured — OTP for ${phoneE164}: ${code}`);
+  console.log(`[Shift24 SMS] No SMS provider configured — OTP for ${phoneE164}`);
   return {
     sent: false,
     provider: 'console',

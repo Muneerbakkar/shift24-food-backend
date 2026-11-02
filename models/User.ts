@@ -28,7 +28,8 @@ export interface IUser {
 const UserSchema = new Schema<IUser>({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-  password: { type: String, default: 'demo123' },
+  // No default password: accounts must always set one explicitly.
+  password: { type: String },
   phone: { type: String, default: '+91 98451 22345' },
   phoneVerified: { type: Boolean, default: false },
   // Role slug: customer/driver are fixed; admin/staff/kitchen or any custom role from the roles collection

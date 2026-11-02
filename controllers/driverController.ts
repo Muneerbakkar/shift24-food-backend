@@ -6,7 +6,10 @@ import { Driver, IDriver } from '../models/Driver';
 import { Order } from '../models/Order';
 import { isConnectedToDb } from '../config/db';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'shift24_jwt_secret_dev_key_12345';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.trim().length < 16) {
+  throw new Error('JWT_SECRET environment variable is required (minimum 16 characters).');
+}
 const JWT_EXPIRES_IN = '7d';
 
 const INITIAL_DRIVERS: Partial<IDriver>[] = [
@@ -15,7 +18,6 @@ const INITIAL_DRIVERS: Partial<IDriver>[] = [
     name: 'Suresh Kumar',
     phone: '+91 98470 12345',
     email: 'suresh.k@shift24.food',
-    password: 'driver123',
     vehicleType: 'Motorcycle',
     vehicleNumber: 'KL-07-CB-2341',
     licenseNumber: 'KL0720180045129',
@@ -28,7 +30,6 @@ const INITIAL_DRIVERS: Partial<IDriver>[] = [
     name: 'Abhijith Nair',
     phone: '+91 94460 56789',
     email: 'abhijith.n@shift24.food',
-    password: 'driver123',
     vehicleType: 'Scooter',
     vehicleNumber: 'KL-07-CD-8812',
     licenseNumber: 'KL0720200078341',
@@ -41,7 +42,6 @@ const INITIAL_DRIVERS: Partial<IDriver>[] = [
     name: 'Mohammed Fasil',
     phone: '+91 97455 33412',
     email: 'fasil.m@shift24.food',
-    password: 'driver123',
     vehicleType: 'Motorcycle',
     vehicleNumber: 'KL-07-CK-9900',
     licenseNumber: 'KL0720190033221',
@@ -54,7 +54,6 @@ const INITIAL_DRIVERS: Partial<IDriver>[] = [
     name: 'Rahul Varma',
     phone: '+91 98950 77123',
     email: 'rahul.v@shift24.food',
-    password: 'driver123',
     vehicleType: 'Van',
     vehicleNumber: 'KL-07-BX-1122',
     licenseNumber: 'KL0720160012908',
@@ -140,8 +139,11 @@ export const createDriver = async (req: Request, res: Response) => {
 
     const { name, phone, email, vehicleType, vehicleNumber, licenseNumber, status, currentZone, notes, password } = req.body;
 
-    if (!name || !phone || !vehicleNumber) {
-      return res.status(400).json({ success: false, message: 'Name, phone, and vehicle number are required' });
+    if (!name || !phone || !vehicleNumber || !password || String(password).trim().length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, phone, vehicle number and a password of at least 8 characters are required'
+      });
     }
 
     const driverId = req.body.driverId || `DRV-${Math.floor(100 + Math.random() * 900)}`;
@@ -162,7 +164,7 @@ export const createDriver = async (req: Request, res: Response) => {
       name: name.trim(),
       phone: phone.trim(),
       email: email ? email.trim().toLowerCase() : undefined,
-      password: password && String(password).trim() ? String(password).trim() : 'driver123',
+      password: await bcrypt.hash(String(password).trim(), 10),
       vehicleType: vehicleType || 'Motorcycle',
       vehicleNumber: vehicleNumber.trim().toUpperCase(),
       licenseNumber: licenseNumber ? licenseNumber.trim().toUpperCase() : undefined,
@@ -194,8 +196,10 @@ export const updateDriver = async (req: Request, res: Response) => {
       updates.licenseNumber = updates.licenseNumber.trim().toUpperCase();
     }
     if (updates.password !== undefined) {
-      if (String(updates.password).trim()) {
-        updates.password = String(updates.password).trim();
+      const rawPassword = String(updates.password).trim();
+      // Only accept a real password, and never store it in plaintext.
+      if (rawPassword.length >= 8) {
+        updates.password = await bcrypt.hash(rawPassword, 10);
       } else {
         delete updates.password;
       }
@@ -249,9 +253,10 @@ export const updateDriverPassword = async (req: Request, res: Response) => {
     }
 
     const newPassword = String(password).trim();
-    if (newPassword.length < 4) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 4 characters long' });
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
     }
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     const conditions: any[] = [{ driverId: id }];
     if (mongoose.isValidObjectId(id)) {
@@ -260,7 +265,7 @@ export const updateDriverPassword = async (req: Request, res: Response) => {
 
     const updated = await Driver.findOneAndUpdate(
       { $or: conditions },
-      { $set: { password: newPassword } },
+      { $set: { password: hashedPassword } },
       { new: true }
     );
 
@@ -354,21 +359,21 @@ export const driverLogin = async (req: Request, res: Response) => {
     }
 
     if (!foundDriver) {
-      return res.status(404).json({
+      // Same answer as a wrong password: do not reveal which identifiers exist.
+      return res.status(401).json({
         success: false,
-        message: 'No driver found with this Driver ID, Phone number, or Email.'
+        message: 'Invalid credentials. Please check your Driver ID and password.'
       });
     }
 
-    // Validate password (default demo password is 'driver123' if not explicitly configured)
-    const expectedPassword = foundDriver.password || 'driver123';
+    // A driver without a stored bcrypt hash cannot sign in — there is no shared
+    // default password any more.
+    const expectedPassword = String(foundDriver.password || '');
     const enteredPassword = String(password).trim();
 
     let isMatch = false;
     if (expectedPassword.startsWith('$2a$') || expectedPassword.startsWith('$2b$')) {
       isMatch = await bcrypt.compare(enteredPassword, expectedPassword);
-    } else {
-      isMatch = enteredPassword === expectedPassword;
     }
 
     if (!isMatch) {

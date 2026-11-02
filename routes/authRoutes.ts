@@ -18,7 +18,7 @@ import {
 } from '../controllers/authController';
 import { driverLogin } from '../controllers/driverController';
 import { requestOtp, verifyOtp } from '../controllers/otpController';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
@@ -36,14 +36,16 @@ router.post('/otp/verify', verifyOtp);
 router.post('/driver-login', driverLogin);
 
 // Admin routes
-router.post('/admin-register', adminRegister);
+// Admin-only: this endpoint creates privileged accounts.
+router.post('/admin-register', requireAdmin, adminRegister);
 router.post('/admin-login', adminLogin);
 
 // Admin user management routes
-router.get('/admin-users', requireAuth, getAdminUsers);
-router.post('/admin-users', requireAuth, createAdminUser);
-router.put('/admin-users/:id', requireAuth, updateAdminUser);
-router.delete('/admin-users/:id', requireAuth, deleteAdminUser);
+// Team management is restricted to a Super Administrator.
+router.get('/admin-users', requireAdmin, getAdminUsers);
+router.post('/admin-users', requireAdmin, createAdminUser);
+router.put('/admin-users/:id', requireAdmin, updateAdminUser);
+router.delete('/admin-users/:id', requireAdmin, deleteAdminUser);
 
 // Current user profile & session verification
 router.get('/me', requireAuth, getMe);
