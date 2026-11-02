@@ -5,7 +5,6 @@ import { User } from './models/User';
 import { Plan } from './models/Plan';
 import { Subscription } from './models/Subscription';
 import { Order } from './models/Order';
-import { MenuItem } from './models/MenuItem';
 
 dotenv.config();
 
@@ -22,8 +21,7 @@ async function seed() {
       User.deleteMany({}),
       Plan.deleteMany({}),
       Subscription.deleteMany({}),
-      Order.deleteMany({}),
-      MenuItem.deleteMany({})
+      Order.deleteMany({})
     ]);
 
     // Seeding must not create an account with a built-in password.
@@ -162,18 +160,6 @@ async function seed() {
       }
     ];
 
-    const SEED_MENU_ITEMS = [
-      { day: 1, mealType: 'breakfast', name: 'Oatmeal with Berries & Nuts', calories: '350 kcal', protein: '12g', carbs: '55g', fat: '10g' },
-      { day: 1, mealType: 'lunch', name: 'Grilled Chicken Quinoa Bowl', calories: '550 kcal', protein: '45g', carbs: '40g', fat: '15g' },
-      { day: 1, mealType: 'dinner', name: 'Baked Salmon with Asparagus', calories: '450 kcal', protein: '35g', carbs: '25g', fat: '22g' },
-      { day: 2, mealType: 'breakfast', name: 'Avocado Toast with Egg', calories: '400 kcal', protein: '18g', carbs: '35g', fat: '22g' },
-      { day: 2, mealType: 'lunch', name: 'Mediterranean Lentil Salad', calories: '480 kcal', protein: '20g', carbs: '55g', fat: '18g' },
-      { day: 2, mealType: 'dinner', name: 'Turkey Meatballs & Zucchini Noodles', calories: '420 kcal', protein: '40g', carbs: '15g', fat: '18g' },
-      { day: 3, mealType: 'breakfast', name: 'Greek Yogurt Parfait', calories: '320 kcal', protein: '22g', carbs: '45g', fat: '5g' },
-      { day: 3, mealType: 'lunch', name: 'Tuna Salad Lettuce Wraps', calories: '380 kcal', protein: '35g', carbs: '10g', fat: '20g' },
-      { day: 3, mealType: 'dinner', name: 'Lean Steak with Broccoli', calories: '550 kcal', protein: '48g', carbs: '40g', fat: '22g' },
-    ];
-
     console.log('[Seeder] Seeding Users with hashed passwords...');
     await (User as any).insertMany(SEED_USERS);
 
@@ -185,9 +171,6 @@ async function seed() {
 
     console.log('[Seeder] Seeding Orders...');
     await (Order as any).insertMany(SEED_ORDERS);
-
-    console.log('[Seeder] Seeding Menu Items...');
-    await (MenuItem as any).insertMany(SEED_MENU_ITEMS);
 
     console.log('✅ [Seeder] Database seeding completed successfully with bcrypt passwords!');
     process.exit(0);
