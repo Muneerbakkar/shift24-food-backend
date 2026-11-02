@@ -65,7 +65,8 @@ export async function createAndDispatchNotification(data: {
     sendPushNotification(
       {
         role: role === 'all' ? undefined : role,
-        email: data.customerEmail
+        email: data.customerEmail,
+        phone: data.customerPhone
       },
       {
         title: data.title,

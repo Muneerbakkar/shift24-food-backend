@@ -8,6 +8,7 @@ export interface IDevicePushSubscription extends Document {
   };
   role: 'customer' | 'admin' | 'driver';
   email?: string;
+  phone?: string;
   userId?: string;
   name?: string;
   device?: string;
@@ -29,6 +30,7 @@ const DevicePushSubscriptionSchema = new Schema<IDevicePushSubscription>(
       index: true 
     },
     email: { type: String, default: '', index: true, lowercase: true, trim: true },
+    phone: { type: String, default: '', index: true, trim: true },
     userId: { type: String, default: '' },
     name: { type: String, default: '' },
     device: { type: String, default: 'Mobile Device' }

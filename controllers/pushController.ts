@@ -22,6 +22,7 @@ export async function sendPushNotification(
   target: {
     role?: 'customer' | 'admin' | 'driver';
     email?: string;
+    phone?: string;
     userId?: string;
   },
   payload: {
@@ -40,18 +41,33 @@ export async function sendPushNotification(
   if (target.role) {
     query.role = target.role;
   }
+
+  const orConditions: any[] = [];
   if (target.email) {
     const cleanEmail = target.email.toLowerCase().trim();
-    if (target.role) {
-      query.$or = [
-        { email: cleanEmail },
-        { email: '' },
-        { email: { $exists: false } }
-      ];
-    } else {
-      query.email = cleanEmail;
+    if (cleanEmail) {
+      orConditions.push({ email: cleanEmail });
     }
   }
+  if (target.phone) {
+    const cleanDigits = target.phone.replace(/\D/g, '').slice(-10);
+    if (cleanDigits.length >= 7) {
+      orConditions.push({ phone: new RegExp(`${cleanDigits}$`) });
+    }
+  }
+
+  if (orConditions.length > 0) {
+    if (target.role) {
+      query.$or = [
+        ...orConditions,
+        { email: '', phone: '' },
+        { email: { $exists: false }, phone: { $exists: false } }
+      ];
+    } else {
+      query.$or = orConditions;
+    }
+  }
+
   if (target.userId) {
     query.userId = target.userId;
   }
@@ -119,7 +135,7 @@ export const subscribeDevice = async (req: Request, res: Response) => {
       return res.status(503).json({ success: false, message: 'MongoDB not connected' });
     }
 
-    const { subscription, role, email, userId, name, device } = req.body;
+    const { subscription, role, email, phone, userId, name, device } = req.body;
 
     if (!subscription || !subscription.endpoint || !subscription.keys) {
       return res.status(400).json({ success: false, message: 'Invalid push subscription payload' });
@@ -128,6 +144,7 @@ export const subscribeDevice = async (req: Request, res: Response) => {
     const authUser = (req as any).user;
     const assignedRole = authUser?.role || (role === 'admin' || role === 'driver' ? role : 'customer');
     const cleanEmail = (authUser?.email || email || '').toLowerCase().trim();
+    const cleanPhone = (authUser?.phone || phone || '').replace(/\D/g, '').slice(-10);
     const cleanName = authUser?.name || name || '';
     const cleanUserId = authUser?._id?.toString() || authUser?.id || userId || '';
 
@@ -139,6 +156,7 @@ export const subscribeDevice = async (req: Request, res: Response) => {
           keys: subscription.keys,
           role: assignedRole,
           email: cleanEmail,
+          phone: cleanPhone,
           userId: cleanUserId,
           name: cleanName,
           device: device || (req.headers['user-agent']?.includes('iPhone') ? 'iOS Device' : req.headers['user-agent']?.includes('Android') ? 'Android Device' : 'Web Device')

@@ -814,6 +814,7 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
           notificationId: `ord-prep-${updatedOrder.orderId}`,
           role: 'customer',
           customerEmail: email,
+          customerPhone: updatedOrder.customerPhone,
           customerName: updatedOrder.customerName,
           orderId: updatedOrder.orderId,
           subscriptionId: updatedOrder.subscriptionId,
@@ -841,6 +842,7 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
           notificationId: `ord-out-${updatedOrder.orderId}`,
           role: 'customer',
           customerEmail: email,
+          customerPhone: updatedOrder.customerPhone,
           customerName: updatedOrder.customerName,
           orderId: updatedOrder.orderId,
           subscriptionId: updatedOrder.subscriptionId,
@@ -884,6 +886,7 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
           notificationId: `ord-del-${updatedOrder.orderId}`,
           role: 'customer',
           customerEmail: email,
+          customerPhone: updatedOrder.customerPhone,
           customerName: updatedOrder.customerName,
           orderId: updatedOrder.orderId,
           subscriptionId: updatedOrder.subscriptionId,
@@ -1000,7 +1003,7 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
       const shortAddr = (updatedOrder.address || '').split(',')[0] || 'Kakkanad';
 
       // 2. Dispatch Customer notification for rider assignment / out for delivery
-      if (customerEmail) {
+      if (customerEmail || updatedOrder.customerPhone) {
         createAndDispatchNotification({
           notificationId: isOutForDelivery 
             ? `ord-out-${updatedOrder.orderId}` 
