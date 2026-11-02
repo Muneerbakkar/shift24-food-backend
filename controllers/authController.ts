@@ -6,6 +6,7 @@ import { Driver } from '../models/Driver';
 import { Subscription } from '../models/Subscription';
 import { isConnectedToDb } from '../config/db';
 import { AuthRequest } from '../middleware/auth';
+import { normalizeIndianPhone } from '../utils/phone';
 import { sendPasswordResetEmail } from '../services/emailService';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'shift24_super_secure_jwt_secret_key_2026';
@@ -48,21 +49,35 @@ export const register = async (req: Request, res: Response) => {
   try {
     const { name, email, password, phone } = req.body;
 
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !phone) {
       return res.status(400).json({
         success: false,
-        message: 'Name, email, and password are required'
+        message: 'Name, email, phone number, and password are all required'
       });
     }
 
-    if (password.length < 6) {
+    const cleanEmail = String(email).toLowerCase().trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid email address'
+      });
+    }
+
+    const normalizedPhone = normalizeIndianPhone(phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Enter a valid 10-digit mobile number'
+      });
+    }
+
+    if (String(password).length < 6) {
       return res.status(400).json({
         success: false,
         message: 'Password must be at least 6 characters'
       });
     }
-
-    const cleanEmail = email.toLowerCase().trim();
 
     if (!isConnectedToDb) {
       return res.status(503).json({
@@ -79,15 +94,28 @@ export const register = async (req: Request, res: Response) => {
       });
     }
 
+    // One customer per mobile number, so OTP sign-in always maps to a single account.
+    const phoneTaken = await User.findOne({
+      role: 'customer',
+      phone: new RegExp(`${normalizedPhone.digits10}$`)
+    });
+    if (phoneTaken) {
+      return res.status(400).json({
+        success: false,
+        message: 'This mobile number is already registered. Please sign in instead.'
+      });
+    }
+
     // Hash password with bcrypt
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const user = await User.create({
-      name,
+      name: String(name).trim(),
       email: cleanEmail,
       password: hashedPassword,
-      phone: phone || '',
+      phone: normalizedPhone.e164,
+      phoneVerified: false,
       role: 'customer',
       allergies: [],
       addresses: [],
