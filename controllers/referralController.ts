@@ -74,6 +74,19 @@ export const getMyReferrals = async (req: Request, res: Response) => {
       ]
     }).sort({ createdAt: -1 });
 
+    // Invitations this customer accepted — they were the friend, not the referrer.
+    // Only non-sensitive fields are exposed (never the referrer's email/phone).
+    const invitedByDocs = await Referral.find({ refereeEmail: cleanEmail }).sort({ createdAt: -1 });
+    const invitedBy = invitedByDocs.map(r => ({
+      referralId: r.referralId,
+      referrerName: r.referrerName,
+      referralCode: r.referralCode,
+      planTitle: r.planTitle,
+      duration: r.duration,
+      payoutStatus: r.payoutStatus,
+      createdAt: r.createdAt
+    }));
+
     const totalReferred = referrals.length;
     // Count monthly plans
     const monthlyReferrals = referrals.filter(r => r.isMonthlyPlan);
@@ -95,7 +108,8 @@ export const getMyReferrals = async (req: Request, res: Response) => {
         paidCount,
         totalEarned,
         pendingEarnings,
-        referrals
+        referrals,
+        invitedBy
       }
     });
   } catch (error: any) {
