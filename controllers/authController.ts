@@ -778,8 +778,12 @@ export const forgotPassword = async (req: Request, res: Response) => {
       success: true,
       message: emailResult.sent
         ? `A 6-digit password reset verification code has been sent directly to ${cleanEmail}. Please check your inbox and spam folder.`
-        : `Verification code generated for ${cleanEmail}. (SMTP not configured in backend/.env)`,
+        : emailResult.smtpError
+          ? `Verification code generated for ${cleanEmail}. Live email could not be sent: ${emailResult.smtpError}`
+          : `Verification code generated for ${cleanEmail}. (Live SMTP is not configured on the server)`,
       emailSent: emailResult.sent,
+      emailConfigured: emailResult.configured,
+      emailError: emailResult.smtpError || undefined,
       previewUrl: emailResult.previewUrl || undefined,
       resetCode: resetCode,
       provider: emailResult.provider

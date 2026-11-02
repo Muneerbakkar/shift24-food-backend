@@ -13,6 +13,10 @@ export interface SendEmailResult {
   previewUrl?: string | false;
   message?: string;
   provider: 'smtp' | 'ethereal' | 'simulated';
+  /** True when EMAIL_USER/SMTP_USER and EMAIL_PASS/SMTP_PASS are present. */
+  configured: boolean;
+  /** Real SMTP failure reason, when a send was attempted and rejected. */
+  smtpError?: string;
 }
 
 export async function sendPasswordResetEmail({
@@ -38,6 +42,8 @@ export async function sendPasswordResetEmail({
   // SMTP authentication requires removing all whitespace.
   const isGmail = smtpService === 'gmail' || smtpUser.includes('@gmail.com');
   const smtpPass = isGmail ? rawPass.replace(/\s+/g, '') : rawPass;
+  const smtpConfigured = Boolean(smtpUser && smtpPass);
+  let smtpError: string | undefined;
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -131,9 +137,10 @@ export async function sendPasswordResetEmail({
       });
 
       console.log(`[Shift24 Email] Successfully dispatched live email to: ${toEmail}`);
-      return { sent: true, provider: 'smtp', message: 'Email sent directly to your inbox' };
+      return { sent: true, provider: 'smtp', message: 'Email sent directly to your inbox', configured: true };
     } catch (err: any) {
-      console.error('[Shift24 Email] Live SMTP transmission failed:', err.message);
+      smtpError = err?.message || String(err);
+      console.error('[Shift24 Email] Live SMTP transmission failed:', smtpError);
     }
   }
 
@@ -164,14 +171,22 @@ export async function sendPasswordResetEmail({
       sent: false,
       previewUrl,
       provider: 'ethereal',
-      message: 'SMTP credentials not configured in backend/.env'
+      configured: smtpConfigured,
+      smtpError,
+      message: smtpError
+        ? `Live SMTP failed: ${smtpError}`
+        : 'Live SMTP credentials are not set (EMAIL_USER / EMAIL_PASS in backend/.env)'
     };
   } catch (etherealErr) {
     console.log(`[Shift24 Email (Console Only)] Code for ${toEmail}: ${resetCode}`);
     return {
       sent: false,
       provider: 'simulated',
-      message: 'SMTP credentials not configured in backend/.env'
+      configured: smtpConfigured,
+      smtpError,
+      message: smtpError
+        ? `Live SMTP failed: ${smtpError}`
+        : 'Live SMTP credentials are not set (EMAIL_USER / EMAIL_PASS in backend/.env)'
     };
   }
 }

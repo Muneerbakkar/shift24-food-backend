@@ -179,11 +179,15 @@ async function startServer() {
   backfillSubscriptionCoordinates().catch(() => {});
 
   app.listen(PORT, () => {
+    const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
+    const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+    const smtpReady = Boolean(smtpUser && smtpPass);
     console.log(`===========================================`);
     console.log(`🚀 Shift24 Express Server running on port ${PORT}`);
     console.log(`🔗 Health Check: http://localhost:${PORT}/api/health`);
     console.log(`📦 MongoDB Status: ${isConnectedToDb ? 'Connected' : 'Fallback Mode Active'}`);
     console.log(`🔐 JWT & Session Auth: Enabled`);
+    console.log(`✉️  Live SMTP: ${smtpReady ? `configured (${smtpUser})` : 'NOT configured — reset codes fall back to a test inbox'}`);
     console.log(`===========================================`);
   });
 }
