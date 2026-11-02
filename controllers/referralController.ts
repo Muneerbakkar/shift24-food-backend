@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 import { User } from '../models/User';
 import { Referral } from '../models/Referral';
 import { Notification } from '../models/Notification';
@@ -227,9 +228,14 @@ export const markReferralAsPaid = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { paymentReference, adminNotes } = req.body;
 
-    const referral = await Referral.findOne({
-      $or: [{ referralId: id }, { _id: id }]
-    });
+    // Records are addressed by their human id ("REF-6244"), but an ObjectId may
+    // also be passed — only include `_id` when it can actually be cast, otherwise
+    // Mongoose throws "Cast to ObjectId failed".
+    const query: Record<string, any> = mongoose.isValidObjectId(id)
+      ? { $or: [{ referralId: id }, { _id: id }] }
+      : { referralId: String(id).trim() };
+
+    const referral = await Referral.findOne(query);
 
     if (!referral) {
       return res.status(404).json({ success: false, message: 'Referral record not found' });
