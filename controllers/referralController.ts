@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { User } from '../models/User';
 import { Referral } from '../models/Referral';
 import { Notification } from '../models/Notification';
+import { Subscription } from '../models/Subscription';
 import { isConnectedToDb } from '../config/db';
 
 /**
@@ -286,6 +287,46 @@ export const markReferralAsPaid = async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('[Referral] Payout error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * DELETE /api/referrals/admin/:id
+ * Admin removes a referral record (e.g. test entries or duplicates).
+ */
+export const deleteReferral = async (req: Request, res: Response) => {
+  try {
+    if (!isConnectedToDb) {
+      return res.status(503).json({ success: false, message: 'Database offline' });
+    }
+
+    const { id } = req.params;
+    const query: Record<string, any> = mongoose.isValidObjectId(id)
+      ? { $or: [{ referralId: id }, { _id: id }] }
+      : { referralId: String(id).trim() };
+
+    const deleted = await Referral.findOneAndDelete(query);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: 'Referral record not found' });
+    }
+
+    // The subscription should no longer claim it was referred by someone.
+    try {
+      await Subscription.updateMany({ subId: deleted.subId }, { $set: { referredBy: '' } });
+    } catch (subErr) {
+      console.warn('[Referral] Could not clear referredBy on subscription:', subErr);
+    }
+
+    console.log(`[Referral] Deleted ${deleted.referralId} (referrer ${deleted.referrerEmail} → ${deleted.refereeEmail})`);
+
+    return res.json({
+      success: true,
+      message: `Referral ${deleted.referralId} deleted`,
+      data: { referralId: deleted.referralId }
+    });
+  } catch (error: any) {
+    console.error('[Referral] Delete error:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };

@@ -3,7 +3,8 @@ import {
   getMyReferrals, 
   validateReferralCode, 
   getAdminReferrals, 
-  markReferralAsPaid 
+  markReferralAsPaid,
+  deleteReferral
 } from '../controllers/referralController';
 
 const router = Router();
@@ -15,5 +16,6 @@ router.post('/validate-code', validateReferralCode);
 // Admin endpoints
 router.get('/admin/all', getAdminReferrals);
 router.patch('/admin/:id/payout', markReferralAsPaid);
+router.delete('/admin/:id', deleteReferral);
 
 export default router;
