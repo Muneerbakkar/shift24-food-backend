@@ -64,20 +64,46 @@ export async function sendOtpSms(phoneE164: string, code: string): Promise<SmsRe
   }
 
   // 2. Fast2SMS (India)
+  //    - With FAST2SMS_OTP_TEMPLATE_ID: DLT-approved OTP template (recommended, reliable)
+  //    - Without it: Quick SMS route "q" (works for testing, carriers may drop it)
   if (fast2smsKey) {
+    const mobile = phoneE164.replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
+    const templateId = (process.env.FAST2SMS_OTP_TEMPLATE_ID || '').trim();
+
     try {
-      const res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-        method: 'POST',
-        headers: {
-          authorization: fast2smsKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          route: 'q',
-          message: text,
-          numbers: phoneE164.replace(/\D/g, ''),
-          flash: 0
-        }),
+      if (templateId) {
+        const res = await fetch('https://www.fast2sms.com/dev/otp/send', {
+          method: 'POST',
+          headers: {
+            authorization: fast2smsKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            mobile,
+            otp_id: templateId,
+            otp: code,
+            otp_expiry: 5,
+            otp_length: 6
+          }),
+          signal: AbortSignal.timeout(12000)
+        });
+        const payload: any = await res.json().catch(() => ({}));
+        if (!res.ok || payload?.return === false) {
+          return {
+            sent: false,
+            provider: 'fast2sms',
+            message: Array.isArray(payload?.message) ? payload.message.join(', ') : (payload?.message || `Fast2SMS rejected the OTP (HTTP ${res.status})`)
+          };
+        }
+        return { sent: true, provider: 'fast2sms' };
+      }
+
+      const url = new URL('https://www.fast2sms.com/dev/bulkV2');
+      url.searchParams.set('route', 'q');
+      url.searchParams.set('message', text);
+      url.searchParams.set('numbers', mobile);
+      const res = await fetch(url.toString(), {
+        headers: { authorization: fast2smsKey },
         signal: AbortSignal.timeout(12000)
       });
       const payload: any = await res.json().catch(() => ({}));
