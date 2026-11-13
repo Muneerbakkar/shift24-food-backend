@@ -142,6 +142,32 @@ export const getAllSubscriptions = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * Subscriptions belonging to the signed-in customer.
+ * Identity always comes from the session — never from a query parameter.
+ */
+export const getMySubscriptions = async (req: Request, res: Response) => {
+  try {
+    if (!isConnectedToDb) {
+      return res.status(503).json({ success: false, message: 'MongoDB database is not connected' });
+    }
+
+    const email = String((req as any).user?.email || '').toLowerCase().trim();
+    if (!email) {
+      return res.json({ success: true, count: 0, data: [] });
+    }
+
+    const safeEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const subscriptions = await Subscription.find({
+      customerEmail: new RegExp(`^${safeEmail}$`, 'i')
+    }).sort({ createdAt: -1 });
+
+    return res.json({ success: true, count: subscriptions.length, data: subscriptions });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const getSubscriptionById = async (req: Request, res: Response) => {
   try {
     if (!isConnectedToDb) {

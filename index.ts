@@ -208,9 +208,13 @@ const writesGuarded = (guard: any) => (req: any, res: any, next: any) =>
 const roleGuard = (req: any, res: any, next: any) =>
   isRead(req) ? requireStaff(req, res, next) : requireAdmin(req, res, next);
 
-// Subscriptions: checkout creates one (any signed-in customer), everything else is staff.
-const subscriptionGuard = (req: any, res: any, next: any) =>
-  req.method === 'POST' ? requireAuth(req, res, next) : can.subscriptions(req, res, next);
+// Subscriptions: checkout creates one (any signed-in customer), and a customer
+// can always read their own list; everything else is staff.
+const subscriptionGuard = (req: any, res: any, next: any) => {
+  if (req.method === 'POST') return requireAuth(req, res, next);
+  if (req.method === 'GET' && req.path === '/mine') return requireAuth(req, res, next);
+  return can.subscriptions(req, res, next);
+};
 
 // Orders: drivers advance status (any signed-in user), the rest is staff.
 const orderGuard = (req: any, res: any, next: any) => {

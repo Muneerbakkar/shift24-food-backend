@@ -304,7 +304,6 @@ export async function syncCustomerNotifications(customerEmail: string) {
           $setOnInsert: {
             role: notif.role,
             unread: true,
-            isDeleted: false,
             createdAt: notif.createdAt || now
           }
         },
