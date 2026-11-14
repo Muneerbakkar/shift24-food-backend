@@ -251,7 +251,7 @@ export async function syncCustomerNotifications(customerEmail: string) {
           subscriptionId: order.subscriptionId || '',
           orderId: order.orderId,
           title: `Kitchen Cooking: ${order.mealType} 🍳`,
-          message: `Our chefs are freshly cooking your ${meal} for today's ${order.deliveryTimeSlot || order.mealType} slot.`,
+          message: `We're freshly cooking your ${meal} for today's ${order.deliveryTimeSlot || order.mealType} slot.`,
           type: 'kitchen',
           status: 'Preparing',
           unread: true,

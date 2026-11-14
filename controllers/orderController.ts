@@ -186,7 +186,7 @@ export const syncOrdersFromSubscriptions = async (options?: { slot?: 'Breakfast'
 
     // Varied daily meal options per slot for realistic dispatch
     const breakfastVarieties = [
-      'Chef Breakfast',
+      'Home-Style Breakfast',
       'Protein Oatmeal & Fresh Berries',
       'Scrambled Eggs & Sourdough Toast',
       'Greek Yogurt Protein Parfait',
@@ -705,7 +705,7 @@ export const createOrder = async (req: Request, res: Response) => {
       customerEmail: orderData.customerEmail || '',
       subscriptionId: orderData.subscriptionId || undefined,
       planTitle: orderData.planTitle || 'Meal Plan',
-      mealName: orderData.mealName || 'Chef Choice Meal',
+      mealName: orderData.mealName || 'Kitchen Choice Meal',
       mealType: orderData.mealType || 'Lunch',
       deliveryDate: orderData.deliveryDate || 'Tomorrow',
       deliveryTimeSlot: orderData.deliveryTimeSlot || '12:00 PM - 01:00 PM',
@@ -819,7 +819,7 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
           orderId: updatedOrder.orderId,
           subscriptionId: updatedOrder.subscriptionId,
           title: `Kitchen Cooking: ${updatedOrder.mealType} 🍳`,
-          message: `Our chefs are freshly cooking your ${updatedOrder.mealName} for today's ${updatedOrder.deliveryTimeSlot}.`,
+          message: `We're freshly cooking your ${updatedOrder.mealName} for today's ${updatedOrder.deliveryTimeSlot}.`,
           type: 'kitchen',
           status: 'Preparing',
           link: '/profile'
