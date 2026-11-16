@@ -869,6 +869,20 @@ export const deleteSubscription = async (req: Request, res: Response) => {
       } catch (orderErr) {
         console.warn('[deleteSubscription] Notice deleting linked orders:', orderErr);
       }
+
+      // Remove the auto-generated sales record so revenue figures drop right away
+      try {
+        const cleanId = subId.replace(/^SUB-/, '');
+        await Sale.deleteMany({
+          $or: [
+            { source: 'Subscription', linkedId: subId },
+            { source: 'Subscription', paymentReference: subId },
+            { source: 'Subscription', saleId: `INV-${cleanId}` }
+          ]
+        });
+      } catch (saleErr) {
+        console.warn('[deleteSubscription] Notice deleting linked sale records:', saleErr);
+      }
     }
 
     return res.json({

@@ -19,13 +19,17 @@ const syncSubscriptionsToSales = async () => {
 
     const validSubIds = subscriptions.map(s => s.subId).filter(Boolean);
 
-    // 1. Clean up orphaned subscription sales for deleted/non-existent subscriptions
-    if (validSubIds.length > 0) {
-      await Sale.deleteMany({
-        source: 'Subscription',
-        linkedId: { $nin: validSubIds }
-      });
-    }
+    // 1. Clean up orphaned subscription sales for deleted/non-existent subscriptions.
+    // This must run even when no subscriptions remain, otherwise deleting the last
+    // subscription leaves its sales record behind.
+    await Sale.deleteMany({
+      source: 'Subscription',
+      linkedId: {
+        $exists: true,
+        $ne: '',
+        $nin: [...validSubIds, ...DUMMY_SUB_IDS]
+      }
+    });
 
     // 2. Sync active subscriptions
     for (const sub of subscriptions) {
